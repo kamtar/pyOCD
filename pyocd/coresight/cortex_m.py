@@ -194,6 +194,10 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
 
     _RESET_RECOVERY_SLEEP_INTERVAL = 0.01 # 10 ms
 
+    # bkpt instruction and mask to ignore the 8-bit immediate
+    _BKPT_MASK = 0xff00
+    _BKPT = 0xbe00
+
     @classmethod
     def factory(cls, ap: MemoryInterface, cmpid: CoreSightComponentID, address: int) -> Any:
         assert isinstance(ap, MEM_AP)
@@ -643,13 +647,39 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         if maskints_differs:
             self.write32(CortexM.DHCSR, dhcsr_step | CortexM.C_HALT)
 
+        # Get current PC.
+        program_counter = self.read_core_register_raw('pc') & ~1
+
         # Get the step timeout. A timeout of 0 means no timeout, so we have to pass None to the Timeout class.
         step_timeout = self.session.options.get('cpu.step.instruction.timeout') or None
 
         exit_step_loop = False
         while True:
-            # Single step using current C_MASKINTS setting
-            self.write32(CortexM.DHCSR, dhcsr_step)
+            # Check if there is a software breakpoint at the current PC. If so, we have to remove the bp,
+            # step, and finally reinsert the bp.
+            #
+            # Note that we have to manually flush the breakpoint manager to apply bp changes to the target
+            # since this method is the one that sends the notifications normally used by the manager for
+            # flushing, and we only send one before (and after) the whole step procedure.
+            bp = self.bp_manager.find_breakpoint(program_counter)
+            if bp and bp.type is Target.BreakpointType.SW:
+                reinsert_sw_bp = True
+                self.bp_manager.remove_breakpoint(program_counter);
+                self.bp_manager.flush()
+            else:
+                reinsert_sw_bp = False
+
+            # If the instruction at the current PC is BKPT, then we have to manually advance the PC.
+            # This can happen if the original code included a BKPT. It's even possible to have a sw bp
+            # controlled by pyocd set at the address of a BKPT in the original code.
+            #
+            # Otherwise, single step using current C_MASKINTS setting with a write to DHCSR.
+            instr = self.read16(program_counter)
+            if (instr & self._BKPT_MASK) == self._BKPT:
+                self.write_core_register_raw('pc', program_counter + 2)
+            else:
+                self.write32(CortexM.DHCSR, dhcsr_step)
+                self.flush()
 
             # Wait for halt to auto set.
             #
@@ -665,12 +695,16 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
                     if (self.read32(CortexM.DHCSR) & CortexM.C_HALT) != 0:
                         break
 
+            if reinsert_sw_bp:
+                self.bp_manager.set_breakpoint(program_counter, type=Target.BreakpointType.SW)
+                self.bp_manager.flush()
+
             # Range is empty, 'range step' will degenerate to 'step'
             if (start == end) or exit_step_loop:
                 break
 
             # Read program counter and compare to [start, end)
-            program_counter = self.read_core_register_raw('pc')
+            program_counter = self.read_core_register_raw('pc') & ~1
             if (program_counter < start) or (end <= program_counter):
                 break
 
@@ -1109,6 +1143,13 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         self.session.notify(Target.Event.PRE_RUN, self, Target.RunType.RESUME)
         self._run_token += 1
         self.clear_debug_cause_bits()
+
+        # Step over a bkpt instruction if there is one at the current PC.
+        pc = self.read_core_register_raw('pc') & ~1
+        instr = self.read16(pc)
+        if (instr & self._BKPT_MASK) == self._BKPT:
+            self.write_core_register_raw('pc', pc + 2)
+
         self.write_memory(CortexM.DHCSR, CortexM.DBGKEY | CortexM.C_DEBUGEN)
         self.flush()
         self.session.notify(Target.Event.POST_RUN, self, Target.RunType.RESUME)
