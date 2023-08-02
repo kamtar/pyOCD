@@ -1094,12 +1094,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         # points to an invalid address. Only do this if the core is actually halted, otherwise we
         # can't access XPSR.
         if self.get_state() == Target.State.HALTED:
-<<<<<<< HEAD
-            xpsr = self.read_core_register('xpsr')
-            assert isinstance(xpsr, int)
-=======
             xpsr = self.read_core_register_raw('xpsr')
->>>>>>> feature/step_over_bkpt
             if xpsr & self.XPSR_THUMB == 0:
                 LOG.warning("T bit in XPSR is invalid; the vector table may be invalid or corrupt")
 
