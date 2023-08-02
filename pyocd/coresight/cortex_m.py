@@ -1,6 +1,6 @@
 # pyOCD debugger
 # Copyright (c) 2006-2020 Arm Limited
-# Copyright (c) 2021-2022 Chris Reed
+# Copyright (c) 2021-2023 Chris Reed
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from __future__ import annotations
 
 import logging
 from time import sleep
@@ -40,10 +42,14 @@ from .ap import MEM_AP
 if TYPE_CHECKING:
     from .coresight_target import CoreSightTarget
     from .rom_table import CoreSightComponentID
+    from ..core.core_registers import (
+        CoreRegistersIndex,
+        CoreRegisterNameOrNumberType,
+        CoreRegisterValueType,
+    )
     from ..core.session import Session
     from ..core.memory_interface import MemoryInterface
     from ..core.memory_map import MemoryMap
-    from ..core.target_delegate import DelegateResult
     from ..debug.context import DebugContext
     from ..debug.elf.elf import ELFBinaryFile
 
@@ -188,8 +194,12 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
 
     _RESET_RECOVERY_SLEEP_INTERVAL = 0.01 # 10 ms
 
+    # bkpt instruction and mask to ignore the 8-bit immediate
+    _BKPT_MASK = 0xff00
+    _BKPT = 0xbe00
+
     @classmethod
-    def factory(cls, ap: "MemoryInterface", cmpid: "CoreSightComponentID", address: int) -> Any:
+    def factory(cls, ap: MemoryInterface, cmpid: CoreSightComponentID, address: int) -> Any:
         assert isinstance(ap, MEM_AP)
 
         # Create a new core instance.
@@ -209,11 +219,11 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         return core
 
     def __init__(self,
-            session: "Session",
+            session: Session,
             ap: MEM_AP,
-            memory_map: Optional["MemoryMap"] = None,
+            memory_map: Optional[MemoryMap] = None,
             core_num: int = 0,
-            cmpid: Optional["CoreSightComponentID"] = None,
+            cmpid: Optional[CoreSightComponentID] = None,
             address: Optional[int] = None
             ) -> None:
         CoreTarget.__init__(self, session, memory_map)
@@ -226,7 +236,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         self._core_number: int = core_num
         self._core_name: str = "Unknown"
         self._run_token: int = 0
-        self._target_context: Optional["DebugContext"] = None
+        self._target_context: Optional[DebugContext] = None
         self._elf = None
         self.target_xml = None
         self._core_registers = CoreRegistersIndex()
@@ -256,7 +266,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         self.bp_manager = BreakpointManager(self)
         self.bp_manager.add_provider(self.sw_bp)
 
-    def add_child(self, cmp: "CoreSightComponent") -> None:
+    def add_child(self, cmp: CoreSightComponent) -> None:
         """@brief Connect related CoreSight components."""
         super().add_child(cmp)
 
@@ -298,11 +308,11 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         return self._supported_reset_types
 
     @property
-    def elf(self) -> Optional["ELFBinaryFile"]:
+    def elf(self) -> Optional[ELFBinaryFile]:
         return self._elf
 
     @elf.setter
-    def elf(self, elffile: "ELFBinaryFile") -> None:
+    def elf(self, elffile: ELFBinaryFile) -> None:
         self._elf = elffile
 
     @property
@@ -637,13 +647,39 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         if maskints_differs:
             self.write32(CortexM.DHCSR, dhcsr_step | CortexM.C_HALT)
 
+        # Get current PC.
+        program_counter = self.read_core_register_raw('pc') & ~1
+
         # Get the step timeout. A timeout of 0 means no timeout, so we have to pass None to the Timeout class.
         step_timeout = self.session.options.get('cpu.step.instruction.timeout') or None
 
         exit_step_loop = False
         while True:
-            # Single step using current C_MASKINTS setting
-            self.write32(CortexM.DHCSR, dhcsr_step)
+            # Check if there is a software breakpoint at the current PC. If so, we have to remove the bp,
+            # step, and finally reinsert the bp.
+            #
+            # Note that we have to manually flush the breakpoint manager to apply bp changes to the target
+            # since this method is the one that sends the notifications normally used by the manager for
+            # flushing, and we only send one before (and after) the whole step procedure.
+            bp = self.bp_manager.find_breakpoint(program_counter)
+            if bp and bp.type is Target.BreakpointType.SW:
+                reinsert_sw_bp = True
+                self.bp_manager.remove_breakpoint(program_counter);
+                self.bp_manager.flush()
+            else:
+                reinsert_sw_bp = False
+
+            # If the instruction at the current PC is BKPT, then we have to manually advance the PC.
+            # This can happen if the original code included a BKPT. It's even possible to have a sw bp
+            # controlled by pyocd set at the address of a BKPT in the original code.
+            #
+            # Otherwise, single step using current C_MASKINTS setting with a write to DHCSR.
+            instr = self.read16(program_counter)
+            if (instr & self._BKPT_MASK) == self._BKPT:
+                self.write_core_register_raw('pc', program_counter + 2)
+            else:
+                self.write32(CortexM.DHCSR, dhcsr_step)
+                self.flush()
 
             # Wait for halt to auto set.
             #
@@ -659,12 +695,16 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
                     if (self.read32(CortexM.DHCSR) & CortexM.C_HALT) != 0:
                         break
 
+            if reinsert_sw_bp:
+                self.bp_manager.set_breakpoint(program_counter, type=Target.BreakpointType.SW)
+                self.bp_manager.flush()
+
             # Range is empty, 'range step' will degenerate to 'step'
             if (start == end) or exit_step_loop:
                 break
 
             # Read program counter and compare to [start, end)
-            program_counter = self.read_core_register('pc')
+            program_counter = self.read_core_register_raw('pc') & ~1
             if (program_counter < start) or (end <= program_counter):
                 break
 
@@ -1054,8 +1094,12 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         # points to an invalid address. Only do this if the core is actually halted, otherwise we
         # can't access XPSR.
         if self.get_state() == Target.State.HALTED:
+<<<<<<< HEAD
             xpsr = self.read_core_register('xpsr')
             assert isinstance(xpsr, int)
+=======
+            xpsr = self.read_core_register_raw('xpsr')
+>>>>>>> feature/step_over_bkpt
             if xpsr & self.XPSR_THUMB == 0:
                 LOG.warning("T bit in XPSR is invalid; the vector table may be invalid or corrupt")
 
@@ -1107,6 +1151,13 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         self.session.notify(Target.Event.PRE_RUN, self, Target.RunType.RESUME)
         self._run_token += 1
         self.clear_debug_cause_bits()
+
+        # Step over a bkpt instruction if there is one at the current PC.
+        pc = self.read_core_register_raw('pc') & ~1
+        instr = self.read16(pc)
+        if (instr & self._BKPT_MASK) == self._BKPT:
+            self.write_core_register_raw('pc', pc + 2)
+
         self.write_memory(CortexM.DHCSR, CortexM.DBGKEY | CortexM.C_DEBUGEN)
         self.flush()
         self.session.notify(Target.Event.POST_RUN, self, Target.RunType.RESUME)
@@ -1126,7 +1177,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
                 else:
                     raise KeyError("register %s not available in this CPU", info.name)
 
-    def read_core_register(self, reg):
+    def read_core_register(self, reg: CoreRegisterNameOrNumberType) -> CoreRegisterValueType:
         """@brief Read one core register.
 
         The core must be halted or reads will fail.
@@ -1144,7 +1195,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         regValue = self.read_core_register_raw(reg_info.index)
         return reg_info.from_raw(regValue)
 
-    def read_core_register_raw(self, reg):
+    def read_core_register_raw(self, reg: CoreRegisterNameOrNumberType) -> int:
         """@brief Read a core register without type conversion.
 
         The core must be halted or reads will fail.
@@ -1161,7 +1212,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         vals = self.read_core_registers_raw([reg])
         return vals[0]
 
-    def read_core_registers_raw(self, reg_list):
+    def read_core_registers_raw(self, reg_list: Sequence[CoreRegisterNameOrNumberType]) -> List[int]:
         """@brief Read one or more core registers.
 
         The core must be halted or reads will fail.
@@ -1181,7 +1232,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         self.check_reg_list(reg_list)
         return self._base_read_core_registers_raw(reg_list)
 
-    def _base_read_core_registers_raw(self, reg_list):
+    def _base_read_core_registers_raw(self, reg_list: List[int]) -> List[int]:
         """@brief Private core register read routine.
 
         Items in the _reg_list_ must be pre-converted to index and only include valid
@@ -1277,7 +1328,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
 
         return reg_vals
 
-    def write_core_register(self, reg, data):
+    def write_core_register(self, reg: CoreRegisterNameOrNumberType, data: CoreRegisterValueType) -> None:
         """@brief Write a CPU register.
 
         The core must be halted or the write will fail.
@@ -1293,7 +1344,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         reg_info = CortexMCoreRegisterInfo.get(reg)
         self.write_core_register_raw(reg_info.index, reg_info.to_raw(data))
 
-    def write_core_register_raw(self, reg, data):
+    def write_core_register_raw(self, reg: CoreRegisterNameOrNumberType, data: int) -> None:
         """@brief Write a CPU register without type conversion.
 
         The core must be halted or the write will fail.
@@ -1308,7 +1359,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         """
         self.write_core_registers_raw([reg], [data])
 
-    def write_core_registers_raw(self, reg_list, data_list):
+    def write_core_registers_raw(self, reg_list: Sequence[CoreRegisterNameOrNumberType], data_list: Sequence[int]) -> None:
         """@brief Write one or more core registers.
 
         The core must be halted or writes will fail.
@@ -1330,7 +1381,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         self.check_reg_list(reg_list)
         self._base_write_core_registers_raw(reg_list, data_list)
 
-    def _base_write_core_registers_raw(self, reg_list, data_list):
+    def _base_write_core_registers_raw(self, reg_list: Sequence[int], data_list: Sequence[int]) -> None:
         """@brief Private core register write routine.
 
         Items in the _reg_list_ must be pre-converted to index and only include valid
@@ -1577,8 +1628,10 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
     def in_thread_mode_on_main_stack(self) -> bool:
         if not self._target_context:
             return False
+
         ipsr = self._target_context.read_core_register('ipsr')
         control = self._target_context.read_core_register('control')
         assert isinstance(ipsr, int)
         assert isinstance(control, int)
-        return (ipsr == 0 and (control & CortexM.CONTROL_SPSEL) == 0)
+        return (self._target_context.read_core_register_raw('ipsr') == 0 and
+                (self._target_context.read_core_register_raw('control') & CortexM.CONTROL_SPSEL) == 0)
