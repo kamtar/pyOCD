@@ -9,4 +9,6 @@
 .update-panel #updateResult small{color:var(--muted)}
 .update-panel #updateResult code{display:block;width:100%;padding:10px;background:#08121c;border:1px solid var(--line);border-radius:7px;overflow:auto;color:var(--cyan)}
 .update-panel #updateResult span{display:flex;align-items:center;gap:12px}.update-panel a{color:var(--cyan)}
+.power-panel{margin-top:18px}.power-panel .formactions{display:flex;gap:10px}.power-panel .danger:not(:disabled){color:#ff8a8a;border-color:#743b43}
+.flash-details{margin-bottom:18px}.flash-details>p{margin-bottom:14px}.flash-job-log{max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#071019;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}.flash-job-log.empty{padding:20px}.flash-event{display:grid;grid-template-columns:85px 58px 1fr;gap:10px;padding:7px 11px;border-bottom:1px solid #172638}.flash-event time{color:var(--muted)}.flash-event b{color:var(--cyan)}.flash-event.warning b{color:var(--amber)}.flash-event.error b{color:var(--red)}
 @media(max-width:600px){.system-facts{grid-template-columns:1fr}}

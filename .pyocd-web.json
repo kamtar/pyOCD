@@ -1,13 +1,14 @@
 {
   "probe": "TWVGEOMNXW4BV",
-  "target_override": "cortex_m",
+  "target_override": "lpc4088",
   "frequency": 1000000,
   "connect_mode": "halt",
   "gpio": {
     "swclk": 20,
     "swdio": 21,
-    "nreset": 16,
-    "restore_pins": true
+    "restore_pins": true,
+    "nreset": 16
   },
-  "interface_name": "local"
+  "interface_name": "local",
+  "dap_protocol": "swd"
 }

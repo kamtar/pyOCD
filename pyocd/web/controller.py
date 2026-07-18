@@ -14,6 +14,7 @@ import platform
 from pathlib import Path
 import re
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -64,6 +65,28 @@ class Job:
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     error: Optional[str] = None
+    events: list[Dict[str, Any]] = field(default_factory=list)
+
+
+class JobLogHandler(logging.Handler):
+    """Capture pyOCD records emitted by the thread running one web job."""
+
+    def __init__(self, job: Job, lock: threading.RLock, limit: int = 200):
+        super().__init__()
+        self._job = job
+        self._lock = lock
+        self._thread_id = threading.get_ident()
+        self._limit = limit
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.thread != self._thread_id:
+            return
+        with self._lock:
+            self._job.events.append({"time": record.created, "level": record.levelname,
+                                     "logger": record.name, "message": self.format(record)})
+            if len(self._job.events) > self._limit:
+                del self._job.events[:-self._limit]
 
 
 class WebLogHandler(logging.Handler):
@@ -226,7 +249,28 @@ class WebController:
         return {"pyocd_version": __version__, "python_version": platform.python_version(),
                 "platform": platform.platform(), "hostname": hostname, "addresses": addresses,
                 "pid": os.getpid(), "uptime": max(0, time.time() - self._started_at),
-                "memory": self._memory_info()}
+                "memory": self._memory_info(),
+                "system_power_supported": sys.platform.startswith("linux")}
+
+    def system_power(self, action: str) -> Dict[str, Any]:
+        """Request a Linux host reboot or poweroff."""
+        if not sys.platform.startswith("linux"):
+            raise WebError("system_power_unsupported",
+                           "System reboot and shutdown are available only on Linux", 403)
+        commands = {"reboot": "reboot", "shutdown": "poweroff"}
+        command = commands.get(action)
+        if command is None:
+            raise WebError("invalid_power_action", "Action must be reboot or shutdown")
+        try:
+            subprocess.run(
+                ["systemctl", command], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                check=True, timeout=15, text=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            detail = getattr(exc, "stderr", None) or str(exc)
+            raise WebError("system_power_failed",
+                           f"Unable to request system {action}: {detail.strip()}", 500) from exc
+        return {"accepted": True, "action": action}
 
     def check_for_update(self) -> Dict[str, Any]:
         """Check this fork's main branch without modifying the installation."""
@@ -299,6 +343,10 @@ class WebController:
                 elif self._gdb:
                     server = next(iter(self._gdb.values()))
                     target_state = "running" if server.is_target_running else "halted"
+                elif self._state == ConnectionState.BUSY:
+                    # Flash jobs own the probe. Polling target state concurrently can corrupt
+                    # the debug transport or make an erase/program operation appear to hang.
+                    target_state = "busy"
                 else:
                     try:
                         target_state = target.get_state().name.lower()
@@ -309,7 +357,9 @@ class WebController:
                     "vendor": getattr(target, "vendor", None),
                     "part_number": getattr(target, "part_number", None),
                     "state": target_state,
-                    "locked": self._target_locked if self._gdb else target.is_locked(),
+                    "locked": (self._target_locked
+                               if self._gdb or self._state == ConnectionState.BUSY
+                               else target.is_locked()),
                     "cores": sorted(target.cores.keys()),
                     "selected_core": getattr(target.selected_core, "core_number", 0),
                     "memory_map": [self._region_dict(r) for r in target.memory_map],
@@ -676,6 +726,8 @@ class WebController:
     def start_job(self, kind: str, fn: Callable[[
                   Job], None]) -> Dict[str, Any]:
         job = Job(uuid.uuid4().hex, kind)
+        job.events.append({"time": job.created_at, "level": "INFO",
+                           "logger": "pyocd.web", "message": f"{kind.title()} queued"})
         self._jobs[job.id] = job
 
         def runner() -> None:
@@ -687,14 +739,21 @@ class WebController:
                     job.state, job.error, job.message = "failed", str(exc), "Failed"
                     job.finished_at = time.time()
                     return
+            handler = JobLogHandler(job, self._lock)
+            logging.getLogger("pyocd").addHandler(handler)
             try:
                 fn(job)
                 with self._lock:
                     job.progress, job.state, job.message = 1.0, "completed", "Completed"
+                    job.events.append({"time": time.time(), "level": "INFO",
+                                       "logger": "pyocd.web", "message": f"{kind.title()} completed"})
             except Exception as exc:
                 with self._lock:
                     job.state, job.error, job.message = "failed", str(exc), "Failed"
+                    job.events.append({"time": time.time(), "level": "ERROR",
+                                       "logger": "pyocd.web", "message": str(exc)})
             finally:
+                logging.getLogger("pyocd").removeHandler(handler)
                 with self._lock:
                     job.finished_at = time.time()
                     self._state = ConnectionState.CONNECTED if self._session else ConnectionState.DISCONNECTED
@@ -722,6 +781,10 @@ class WebController:
             session = self._require_session()
             count = len(artifacts)
             for index, (artifact, image) in enumerate(artifacts):
+                with self._lock:
+                    job.events.append({"time": time.time(), "level": "INFO",
+                                       "logger": "pyocd.web",
+                                       "message": f"Preparing {artifact['name']} ({index + 1}/{count})"})
                 def progress(value: float, image_index: int = index) -> None:
                     total = (image_index + float(value)) / count
                     job.progress = total

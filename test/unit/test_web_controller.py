@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from pyocd.web.controller import WebController, WebError
+from pyocd.web import controller as web_controller
 from pyocd.core.target import Target
 
 
@@ -33,6 +34,33 @@ def test_unsafe_console_rejected_before_connection(tmp_path):
     controller.close()
 
 
+def test_system_power_is_disabled_outside_linux(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    monkeypatch.setattr(web_controller.sys, "platform", "win32")
+    monkeypatch.setattr(web_controller.subprocess, "run",
+                        lambda *args, **kwargs: pytest.fail("power command was executed"))
+    assert controller.system_info()["system_power_supported"] is False
+    with pytest.raises(WebError) as error:
+        controller.system_power("reboot")
+    assert error.value.code == "system_power_unsupported"
+    controller.close()
+
+
+def test_system_power_uses_fixed_linux_commands(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    calls = []
+    monkeypatch.setattr(web_controller.sys, "platform", "linux")
+    monkeypatch.setattr(web_controller.subprocess, "run",
+                        lambda command, **kwargs: calls.append(command))
+    assert controller.system_power("reboot") == {"accepted": True, "action": "reboot"}
+    assert controller.system_power("shutdown") == {"accepted": True, "action": "shutdown"}
+    assert calls == [["systemctl", "reboot"], ["systemctl", "poweroff"]]
+    with pytest.raises(WebError) as error:
+        controller.system_power("invalid")
+    assert error.value.code == "invalid_power_action"
+    controller.close()
+
+
 def test_job_progress_remains_observable(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path))
     started = threading.Event()
@@ -41,6 +69,7 @@ def test_job_progress_remains_observable(tmp_path, monkeypatch):
 
     def work(job):
         job.progress = 0.5
+        web_controller.logging.getLogger("pyocd.flash.test").warning("Erasing test flash")
         started.set()
         assert release.wait(2)
 
@@ -49,7 +78,37 @@ def test_job_progress_remains_observable(tmp_path, monkeypatch):
     snapshot = controller.snapshot()
     assert snapshot["state"] == "busy"
     assert next(item for item in snapshot["jobs"] if item["id"] == job["id"])["progress"] == 0.5
+    events = next(item for item in snapshot["jobs"] if item["id"] == job["id"])["events"]
+    assert any(item["message"] == "Erasing test flash" for item in events)
     release.set()
+    controller.close()
+
+
+def test_busy_snapshot_does_not_access_target_hardware(tmp_path):
+    controller = WebController(str(tmp_path))
+
+    def unexpected_hardware_access():
+        pytest.fail("snapshot accessed target hardware during a job")
+
+    core = SimpleNamespace(core_number=0)
+    target = SimpleNamespace(
+        get_state=unexpected_hardware_access, is_locked=unexpected_hardware_access,
+        vendor="Vendor", part_number="Part", cores={0: core}, selected_core=core,
+        memory_map=[])
+    probe = SimpleNamespace(
+        unique_id="probe", vendor_name="Vendor", product_name="Probe",
+        wire_protocol=None)
+    controller._session = SimpleNamespace(
+        is_open=True, target=target, probe=probe,
+        board=SimpleNamespace(target_type="part"),
+        options=SimpleNamespace(get=lambda key: 1000000))
+    controller._state = web_controller.ConnectionState.BUSY
+
+    snapshot = controller.snapshot()
+
+    assert snapshot["target"]["state"] == "busy"
+    assert snapshot["target"]["locked"] is None
+    controller._session = None
     controller.close()
 
 

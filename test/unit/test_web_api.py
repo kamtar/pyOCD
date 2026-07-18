@@ -49,6 +49,22 @@ def test_system_information_route(tmp_path):
     run(scenario())
 
 
+def test_system_power_route(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        controller.system_power = lambda action: {"accepted": True, "action": action}
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/v1/system/power/reboot", json={}, headers=CSRF)
+            assert response.status == 202
+            assert await response.json() == {"accepted": True, "action": "reboot"}
+        finally:
+            await client.close()
+    run(scenario())
+
+
 def test_update_check_route(tmp_path):
     async def scenario():
         controller = WebController(str(tmp_path))

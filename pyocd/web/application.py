@@ -117,6 +117,10 @@ def create_application(
     async def system_info(request):
         return web.json_response(await asyncio.to_thread(ctrl.system_info))
 
+    async def system_power(request):
+        return web.json_response(await asyncio.to_thread(
+            ctrl.system_power, request.match_info["action"]), status=202)
+
     async def update_check(request):
         return web.json_response(await asyncio.to_thread(ctrl.check_for_update))
 
@@ -289,6 +293,7 @@ def create_application(
     routes = [
         web.get("/api/v1/state", state), web.get("/api/v1/health", health),
         web.get("/api/v1/system", system_info),
+        web.post("/api/v1/system/power/{action}", system_power),
         web.get("/api/v1/update/check", update_check),
         web.get("/api/v1/config", configuration), web.put("/api/v1/config", configuration),
         web.get("/api/v1/probes", probes), web.get("/api/v1/targets", targets),

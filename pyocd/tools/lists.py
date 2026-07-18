@@ -26,12 +26,6 @@ from ..target import TARGET
 from ..target.builtin import BUILTIN_TARGETS
 from ..board.board_ids import BOARD_ID_TO_INFO
 from ..target.pack import pack_target
-from ..probe.debug_probe import DebugProbe
-
-class StubProbe(DebugProbe):
-    @property
-    def unique_id(self) -> str:
-        return "0"
 
 class ListGenerator(object):
     @staticmethod
@@ -157,9 +151,10 @@ class ListGenerator(object):
             if name_filter and name_filter not in name.lower():
                 continue
 
-            # Create session with a stub probe that allows us to instantiate the target. This will create
-            # Board and Target instances of its own, so set some options to control that.
-            s = Session(StubProbe(), no_config=True, target_override='cortex_m')
+            # A probe is unnecessary for target metadata. Passing one causes Session to create a
+            # throwaway generic Board for every target, which is both expensive and emits a
+            # misleading "Target type is cortex_m" INFO message for each entry.
+            s = Session(None, no_config=True, target_override='cortex_m')
             t = TARGET[name](s)
 
             # Filter by vendor.
