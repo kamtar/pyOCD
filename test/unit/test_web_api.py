@@ -5,6 +5,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from pyocd.web.application import create_application
 from pyocd.web.controller import WebController
 
+CSRF = {"X-pyOCD-CSRF": "1"}
+
 
 def run(coro):
     return asyncio.run(coro)
@@ -55,6 +57,22 @@ def test_api_authentication(tmp_path):
     run(scenario())
 
 
+def test_configuration_round_trip(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            profile = {"target_override": "stm32f103rc", "gpio": {"swclk": 11, "swdio": 8}}
+            saved = await client.put("/api/v1/config", json=profile, headers=CSRF)
+            assert saved.status == 200
+            loaded = await client.get("/api/v1/config")
+            assert await loaded.json() == profile
+        finally:
+            await client.close()
+    run(scenario())
+
+
 def test_browser_debugger_routes(tmp_path):
     async def scenario():
         controller = WebController(str(tmp_path))
@@ -73,11 +91,12 @@ def test_browser_debugger_routes(tmp_path):
         await client.start_server()
         try:
             started = await client.post(
-                "/api/v1/debug/start", json={"core": 1, "port": 4444})
+                "/api/v1/debug/start", json={"core": 1, "port": 4444}, headers=CSRF)
             assert (await started.json())["debugger"]["core"] == 1
             frames = await client.get("/api/v1/debug/frames")
             assert (await frames.json())["frames"][0]["func"] == "main"
-            selected = await client.put("/api/v1/debug/frame/2", json={})
+            selected = await client.put(
+                "/api/v1/debug/frame/2", json={}, headers=CSRF)
             assert (await selected.json())["selected"] == 2
             locals_response = await client.get("/api/v1/debug/variables/locals")
             assert (await locals_response.json())["variables"][0]["name"] == "counter"
@@ -86,6 +105,61 @@ def test_browser_debugger_routes(tmp_path):
             assert (await globals_response.json())["limit"] == 12
             children = await client.get("/api/v1/debug/variables/webvar1/children")
             assert (await children.json())["handle"] == "webvar1"
+        finally:
+            await client.close()
+    run(scenario())
+
+
+def test_tokenless_mutations_require_csrf_header(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        controller.erase = lambda mode, addresses: {"mode": mode}
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            denied = await client.post("/api/v1/jobs/erase")
+            assert denied.status == 403
+            assert (await denied.json())["error"]["code"] == "csrf_required"
+
+            missing_mode = await client.post(
+                "/api/v1/jobs/erase", json={}, headers=CSRF)
+            assert missing_mode.status == 400
+            assert (await missing_mode.json())["error"]["code"] == "erase_mode_required"
+
+            allowed = await client.post(
+                "/api/v1/jobs/erase", json={"mode": "chip"}, headers=CSRF)
+            assert allowed.status == 202
+        finally:
+            await client.close()
+    run(scenario())
+
+
+def test_cross_origin_requests_are_rejected(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            response = await client.get(
+                "/api/v1/state", headers={"Origin": "https://attacker.example"})
+            assert response.status == 403
+            assert (await response.json())["error"]["code"] == "forbidden_origin"
+        finally:
+            await client.close()
+    run(scenario())
+
+
+def test_loopback_server_rejects_dns_rebinding_host(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            response = await client.get(
+                "/api/v1/state",
+                headers={"Host": "attacker.example", "Origin": "http://attacker.example"})
+            assert response.status == 403
+            assert (await response.json())["error"]["code"] == "forbidden_host"
         finally:
             await client.close()
     run(scenario())

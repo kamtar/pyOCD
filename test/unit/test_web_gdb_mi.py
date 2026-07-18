@@ -24,6 +24,12 @@ def test_parse_variables_and_escaped_strings():
     assert record.payload["variables"][1]["name"] == "counter"
 
 
+def test_parse_c_string_octal_and_non_json_escapes():
+    record = parse_mi_record(r'4^done,value="\377\a\v"')
+
+    assert record.payload["value"] == "\xff\a\v"
+
+
 def test_parse_async_stop_record():
     record = parse_mi_record(
         '*stopped,reason="end-stepping-range",frame={addr="0x100",func="work"}')

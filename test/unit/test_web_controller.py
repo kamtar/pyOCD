@@ -98,6 +98,36 @@ def test_logs_can_be_cleared(tmp_path):
     controller.close()
 
 
+def test_connection_profile_is_persisted_and_reloaded(tmp_path):
+    config = tmp_path / "web.json"
+    profile = {"target_override": "stm32f103rc", "gpio": {
+        "swclk": 11, "swdio": 8, "nreset": 25}}
+    controller = WebController(str(tmp_path / "artifacts"), config_path=str(config))
+    controller.save_profile(profile)
+    controller.close()
+
+    restored = WebController(str(tmp_path / "artifacts2"), config_path=str(config))
+    assert restored.snapshot()["profile"] == profile
+    restored.close()
+
+
+def test_target_actions_work_without_browser_debugger(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
+    calls = []
+    target = SimpleNamespace(
+        halt=lambda: calls.append("halt"), resume=lambda: calls.append("resume"),
+        reset=lambda: calls.append("reset"), reset_and_halt=lambda: calls.append("reset-halt"),
+        step=lambda: calls.append("step"))
+    monkeypatch.setattr(controller, "_require_exclusive", lambda: SimpleNamespace(target=target))
+    monkeypatch.setattr(controller, "snapshot", lambda: {"connected": True})
+
+    for action in ("halt", "reset-halt", "resume"):
+        controller.target_action(action)
+
+    assert calls == ["halt", "reset-halt", "resume"]
+    controller.close()
+
+
 def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path))
     first = controller.upload("bootloader.bin", b"boot")
@@ -143,39 +173,87 @@ def test_raspberry_pi_gpio_is_hidden_on_windows(tmp_path, monkeypatch):
     controller.close()
 
 
-def test_auto_adapter_selects_first_discovered_probe(tmp_path, monkeypatch):
+def test_connect_requires_explicit_probe_selection(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path))
-    probes = [object(), object()]
-    created = []
+    with pytest.raises(WebError) as error:
+        controller.connect({"target_override": "stm32f103rc"})
+
+    assert error.value.code == "probe_required"
+    controller.close()
+
+
+def test_connect_rejects_host_execution_options(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    monkeypatch.setattr(
+        "pyocd.web.controller.ConnectHelper.choose_probe", lambda **kwargs: object())
+
+    with pytest.raises(WebError) as error:
+        controller.connect({
+            "probe": "probe", "target_override": "stm32f103rc",
+            "options": {"user_script": "uploaded.py"},
+        })
+
+    assert error.value.code == "unsupported_options"
+    controller.close()
+
+
+def test_connect_closes_local_session_when_console_setup_fails(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    closed = []
 
     class FakeSession:
         def __init__(self, probe, options):
-            created.append(probe)
-            self.is_open = False
-            self.gdbservers = {}
+            self.target = SimpleNamespace(is_locked=lambda: False)
 
         def open(self):
-            self.is_open = True
+            pass
 
         def close(self):
-            self.is_open = False
-
-    class FakeConsole:
-        def __init__(self, output_stream):
-            pass
-
-        def attach_session(self, session):
-            pass
+            closed.append(True)
 
     monkeypatch.setattr(
-        "pyocd.web.controller.ConnectHelper.get_all_connected_probes",
-        lambda blocking=False: probes)
+        "pyocd.web.controller.ConnectHelper.choose_probe", lambda **kwargs: object())
     monkeypatch.setattr("pyocd.web.controller.Session", FakeSession)
-    monkeypatch.setattr("pyocd.web.controller.CommandExecutionContext", FakeConsole)
-    monkeypatch.setattr(controller, "snapshot", lambda: {"connected": True})
+    monkeypatch.setattr(
+        "pyocd.web.controller.CommandExecutionContext",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("console failed")))
 
-    assert controller.connect({"target_override": "cortex_m"})["connected"]
-    assert created == [probes[0]]
+    with pytest.raises(RuntimeError, match="console failed"):
+        controller.connect({"probe": "probe", "target_override": "stm32f103rc"})
+
+    assert closed == [True]
+    controller.close()
+
+
+def test_gdb_start_rolls_back_partial_startup(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    stopped = []
+
+    class FakeServer:
+        def __init__(self, session, core):
+            self.core = core
+
+        def start(self):
+            if self.core == 1:
+                raise RuntimeError("bind failed")
+
+        def stop(self):
+            stopped.append(self.core)
+
+    options = SimpleNamespace(set=lambda key, value: None)
+    session = SimpleNamespace(
+        is_open=True, target=SimpleNamespace(cores={0: object(), 1: object()}),
+        options=options, gdbservers={})
+    controller._session = session
+    monkeypatch.setattr("pyocd.web.controller.GDBServer", FakeServer)
+
+    with pytest.raises(RuntimeError, match="bind failed"):
+        controller.gdb_start(3333, [0, 1])
+
+    assert stopped == [0, 1]
+    assert controller._gdb == {}
+    assert session.gdbservers == {}
+    controller._session = None
     controller.close()
 
 

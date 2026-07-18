@@ -6,10 +6,10 @@ It is designed for a long-running pyOCD installation such as a Raspberry Pi prog
 
 ## Installation and startup
 
-Install the optional web dependencies, then start the service:
+Install pyOCD, then start the service:
 
 ```console
-pip install "pyocd[web]"
+pip install pyocd
 pyocd web
 ```
 
@@ -24,6 +24,9 @@ pyocd web --host 0.0.0.0 --auth-token-file /etc/pyocd/web-token
 
 Use HTTPS at a reverse proxy when traffic leaves the device. `--insecure` permits an unauthenticated
 remote bind and is intended only for isolated development networks.
+
+Tokenless local API clients must send `X-pyOCD-CSRF: 1` with POST, PUT, PATCH, and DELETE requests.
+The browser interface adds this header automatically. Bearer-authenticated API clients do not need it.
 
 ## Raspberry Pi GPIO
 

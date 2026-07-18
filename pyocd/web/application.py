@@ -8,6 +8,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 from .controller import WebController, WebError
 
@@ -17,12 +18,13 @@ MAX_DUMP = 512 * 1024 * 1024
 
 
 def create_application(
-        controller: Optional[WebController] = None, token: Optional[str] = None):
+        controller: Optional[WebController] = None, token: Optional[str] = None,
+        local_only: bool = True):
     try:
         from aiohttp import web
     except ImportError as exc:
         raise RuntimeError(
-            "The web interface requires the 'web' extra: pip install pyocd[web]") from exc
+            "The web interface requires aiohttp; reinstall pyOCD to restore its dependencies") from exc
 
     ctrl = controller or WebController()
 
@@ -54,9 +56,32 @@ def create_application(
                     {"error": {"code": "unauthorized", "message": "Authentication required"}}, status=401)
         return await handler(request)
 
+    @web.middleware
+    async def browser_security(request, handler):
+        """Reject cross-origin browser access and simple cross-site mutations."""
+        request_hostname = urlsplit("//" + request.host).hostname
+        if local_only and request_hostname not in {"127.0.0.1", "localhost", "::1"}:
+            return web.json_response(
+                {"error": {"code": "forbidden_host", "message": "Non-loopback Host is not allowed"}},
+                status=403)
+        origin = request.headers.get("Origin")
+        if origin and urlsplit(origin).netloc.lower() != request.host.lower():
+            return web.json_response(
+                {"error": {"code": "forbidden_origin", "message": "Cross-origin access is not allowed"}},
+                status=403)
+        if (not token
+                and request.path.startswith("/api/")
+                and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+                and request.headers.get("X-pyOCD-CSRF") != "1"):
+            return web.json_response(
+                {"error": {"code": "csrf_required", "message": "Missing pyOCD request header"}},
+                status=403)
+        return await handler(request)
+
     app = web.Application(
         middlewares=[
             errors,
+            browser_security,
             authenticate],
         client_max_size=MAX_UPLOAD)
 
@@ -65,6 +90,11 @@ def create_application(
 
     async def state(request):
         return web.json_response(ctrl.snapshot())
+
+    async def configuration(request):
+        if request.method == "GET":
+            return web.json_response(ctrl.snapshot()["profile"])
+        return web.json_response(ctrl.save_profile(await body(request)))
 
     async def health(request):
         return web.json_response({"status": "ok"})
@@ -150,8 +180,10 @@ def create_application(
 
     async def erase(request):
         data = await body(request)
+        if "mode" not in data:
+            raise WebError("erase_mode_required", "Select an explicit erase mode")
         return web.json_response(ctrl.erase(
-            data.get("mode", "chip"), data.get("addresses")), status=202)
+            data["mode"], data.get("addresses")), status=202)
 
     async def attach_elf(request):
         data = await body(request)
@@ -224,6 +256,7 @@ def create_application(
 
     routes = [
         web.get("/api/v1/state", state), web.get("/api/v1/health", health),
+        web.get("/api/v1/config", configuration), web.put("/api/v1/config", configuration),
         web.get("/api/v1/probes", probes), web.get("/api/v1/targets", targets),
         web.post("/api/v1/session/connect",
                  connect), web.post("/api/v1/session/disconnect", disconnect),
@@ -276,10 +309,13 @@ def run_webserver(host: str = "127.0.0.1", port: int = 8080, token: Optional[str
         artifact_dir=artifact_dir,
         unsafe_console=unsafe_console,
         gdb_executable=gdb_executable)
+    LOG.info("pyOCD web interface listening on http://%s:%d", host, port)
     web.run_app(
         create_application(
             controller,
-            token),
+            token,
+            local_only=host in ("127.0.0.1", "localhost", "::1")),
         host=host,
         port=port,
-        print=lambda s: LOG.info(s))
+        print=None,
+        access_log=None)

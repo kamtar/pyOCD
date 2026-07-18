@@ -1,0 +1,11 @@
+{
+  "probe": "TWVGEOMNXW4BV",
+  "target_override": "cortex_m",
+  "frequency": 1000000,
+  "connect_mode": "halt",
+  "gpio": {
+    "swclk": 11,
+    "swdio": 8,
+    "restore_pins": true
+  }
+}

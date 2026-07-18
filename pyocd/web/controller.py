@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from io import StringIO
+import json
 import logging
 from pathlib import Path
 import re
@@ -73,10 +74,14 @@ class WebController:
     """Owns the sole active Session and serialises access to the probe."""
 
     MAX_MEMORY_READ = 1024 * 1024
+    SAFE_SESSION_OPTIONS = {
+        "auto_unlock", "connect_mode", "dap_protocol", "frequency",
+        "reset_type", "resume_on_disconnect",
+    }
 
     def __init__(
             self, artifact_dir: Optional[str] = None, unsafe_console: bool = False,
-            gdb_executable: Optional[str] = None):
+            gdb_executable: Optional[str] = None, config_path: Optional[str] = None):
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="pyocd-web")
@@ -84,7 +89,10 @@ class WebController:
         self._console: Optional[CommandExecutionContext] = None
         self._state = ConnectionState.DISCONNECTED
         self._error: Optional[str] = None
-        self._profile: Dict[str, Any] = {}
+        default_config = (Path(artifact_dir) / ".pyocd-web.json"
+                          if artifact_dir else Path(".pyocd-web.json"))
+        self._config_path = Path(config_path) if config_path else default_config.resolve()
+        self._profile: Dict[str, Any] = self._load_profile()
         self._gdb: Dict[int, GDBServer] = {}
         self._debugger: Optional[GdbMiClient] = None
         self._debugger_state = "inactive"
@@ -104,6 +112,32 @@ class WebController:
                 prefix="pyocd-web-"))
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self.unsafe_console = unsafe_console
+
+    def _load_profile(self) -> Dict[str, Any]:
+        try:
+            data = json.loads(self._config_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def save_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist connection settings independently of a probe connection."""
+        if not isinstance(profile, dict):
+            raise WebError("invalid_config", "Configuration must be a JSON object")
+        if profile.get("target_override") == "cortex_m":
+            raise WebError(
+                "generic_target_unsupported",
+                "The web interface requires a specific target MCU")
+        with self._lock:
+            self._profile = profile
+            try:
+                self._config_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = self._config_path.with_suffix(self._config_path.suffix + ".tmp")
+                temporary.write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")
+                temporary.replace(self._config_path)
+            except OSError as exc:
+                raise WebError("config_write_failed", str(exc), 500) from exc
+            return self._profile
 
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)
@@ -208,19 +242,34 @@ class WebController:
         return obj
 
     def targets(self, query: Optional[str] = None) -> Dict[str, Any]:
-        return ListGenerator.list_targets(name_filter=query)
+        result = ListGenerator.list_targets(name_filter=query)
+        result["targets"] = [
+            target for target in result.get("targets", [])
+            if target.get("name") != "cortex_m"]
+        return result
 
     def connect(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(profile, dict):
+            raise WebError("invalid_profile", "Connection profile must be a JSON object")
         with self._lock:
             if self._state == ConnectionState.BUSY:
                 raise WebError("operation_busy", "Wait for the active operation to finish", 409)
+            target_override = profile.get("target_override")
+            if not target_override or target_override == "cortex_m":
+                raise WebError(
+                    "target_required",
+                    "Select a specific target MCU before connecting",
+                    400)
             self._disconnect_locked()
             self._state, self._error = ConnectionState.CONNECTING, None
+            session: Optional[Session] = None
             try:
                 selector = profile.get("probe") or None
                 if selector is None:
-                    probes = ConnectHelper.get_all_connected_probes(blocking=False)
-                    probe = probes[0] if probes else None
+                    raise WebError(
+                        "probe_required",
+                        "Select a debug probe before connecting",
+                        400)
                 else:
                     probe = ConnectHelper.choose_probe(
                         blocking=False, return_first=True, unique_id=selector)
@@ -229,12 +278,21 @@ class WebController:
                         "probe_not_found",
                         "The selected debug probe is not available",
                         404)
-                options = dict(profile.get("options") or {})
-                for key in ("target_override", "frequency",
-                            "connect_mode", "project_dir", "pack"):
+                supplied_options = profile.get("options") or {}
+                if not isinstance(supplied_options, dict):
+                    raise WebError("invalid_options", "Connection options must be a JSON object")
+                rejected = set(supplied_options) - self.SAFE_SESSION_OPTIONS
+                if rejected:
+                    raise WebError(
+                        "unsupported_options",
+                        "Unsupported connection option(s): " + ", ".join(sorted(rejected)))
+                options = dict(supplied_options)
+                for key in ("target_override", "frequency", "connect_mode", "dap_protocol"):
                     if profile.get(key) is not None:
                         options[key] = profile[key]
                 gpio = profile.get("gpio") or {}
+                if not isinstance(gpio, dict):
+                    raise WebError("invalid_gpio", "GPIO settings must be a JSON object")
                 for key in ("swclk", "swdio", "nreset", "swdio_dir",
                             "restore_pins", "wait_retries"):
                     if key in gpio:
@@ -249,7 +307,7 @@ class WebController:
                 console = CommandExecutionContext(output_stream=output)
                 console.attach_session(session)
                 self._session, self._console = session, console
-                self._profile = profile
+                self.save_profile(profile)
                 self._state = ConnectionState.CONNECTED
                 self._record_activity_locked("connect", "Target connected")
                 return self.snapshot()
@@ -257,6 +315,8 @@ class WebController:
                 self._state, self._error = ConnectionState.ERROR, str(exc)
                 if self._session:
                     self._session.close()
+                elif session:
+                    session.close()
                 self._session, self._console = None, None
                 raise
 
@@ -544,12 +604,35 @@ class WebController:
             session = self._require_session()
             if self._gdb:
                 return self.snapshot()
+            if cores is not None and not isinstance(cores, list):
+                raise WebError("invalid_cores", "Cores must be a JSON array")
+            selected_cores = cores or sorted(session.target.cores.keys())
+            if any(not isinstance(core, int) for core in selected_cores):
+                raise WebError("invalid_core", "Core numbers must be integers")
+            if len(set(selected_cores)) != len(selected_cores):
+                raise WebError("duplicate_core", "Each core may only be selected once")
+            invalid_cores = [core for core in selected_cores if core not in session.target.cores]
+            if invalid_cores:
+                raise WebError(
+                    "invalid_core",
+                    "Core(s) are not available: " + ", ".join(map(str, invalid_cores)))
             session.options.set("gdbserver_port", port)
-            for core in cores or sorted(session.target.cores.keys()):
-                server = GDBServer(session, core=core)
-                session.gdbservers[core] = server
-                self._gdb[core] = server
-                server.start()
+            try:
+                for core in selected_cores:
+                    server = GDBServer(session, core=core)
+                    session.gdbservers[core] = server
+                    self._gdb[core] = server
+                    server.start()
+            except Exception:
+                for server in list(self._gdb.values()):
+                    try:
+                        server.stop()
+                    except Exception:
+                        logging.getLogger(__name__).exception(
+                            "Unable to stop GDB server after startup failure")
+                session.gdbservers.clear()
+                self._gdb.clear()
+                raise
             self._record_activity_locked("gdb", "GDB server started")
             return self.snapshot()
 

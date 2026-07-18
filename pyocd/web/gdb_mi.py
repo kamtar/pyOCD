@@ -54,12 +54,7 @@ class _MiValueParser:
             return ""
         ch = self.text[self.pos]
         if ch == '"':
-            try:
-                value, end = json.JSONDecoder().raw_decode(self.text[self.pos:])
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                raise GdbMiError(f"Invalid GDB/MI string: {exc}") from exc
-            self.pos += end
-            return value
+            return self._c_string()
         if ch == "{":
             self.pos += 1
             value = self.parse_results() if not self._peek("}") else {}
@@ -88,6 +83,39 @@ class _MiValueParser:
         while self.pos < len(self.text) and self.text[self.pos] not in ",}]":
             self.pos += 1
         return self.text[start:self.pos]
+
+    def _c_string(self) -> str:
+        """Parse a GDB/MI C string, including octal escapes."""
+        self._expect('"')
+        result = []
+        escapes = {
+            "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
+            "t": "\t", "v": "\v", "\\": "\\", '"': '"', "'": "'",
+        }
+        while self.pos < len(self.text):
+            ch = self.text[self.pos]
+            self.pos += 1
+            if ch == '"':
+                return "".join(result)
+            if ch != "\\":
+                result.append(ch)
+                continue
+            if self.pos >= len(self.text):
+                break
+            escaped = self.text[self.pos]
+            self.pos += 1
+            if escaped in "01234567":
+                digits = escaped
+                while (len(digits) < 3 and self.pos < len(self.text)
+                       and self.text[self.pos] in "01234567"):
+                    digits += self.text[self.pos]
+                    self.pos += 1
+                result.append(chr(int(digits, 8)))
+            elif escaped in escapes:
+                result.append(escapes[escaped])
+            else:
+                raise GdbMiError(f"Invalid GDB/MI escape: \\{escaped}")
+        raise GdbMiError("Unterminated GDB/MI string")
 
     def _identifier(self) -> str:
         match = re.match(r"[A-Za-z0-9_\-]+", self.text[self.pos:])
