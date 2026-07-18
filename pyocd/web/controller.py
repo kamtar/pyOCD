@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from enum import Enum
@@ -26,6 +27,7 @@ from typing import Any, Callable, Dict, Optional
 
 from .. import __version__
 from ..commands.execution_context import CommandExecutionContext
+from ..core.exceptions import TransferError
 from ..core.helpers import ConnectHelper
 from ..core.options import OPTIONS_INFO
 from ..core.session import Session
@@ -145,6 +147,9 @@ class WebController:
         self._debugger_core = 0
         self._gdb_executable = gdb_executable
         self._target_locked: Optional[bool] = None
+        # Capture static connection details once. Some remote probes implement property
+        # reads as transport requests, so flash jobs must serve polling from this cache.
+        self._session_metadata: Optional[Dict[str, Any]] = None
         self._var_objects: set[str] = set()
         self._next_var_object = 0
         self._jobs: Dict[str, Job] = {}
@@ -343,6 +348,12 @@ class WebController:
                               for item in self._artifacts.values()],
             }
             if self._session and self._session.is_open:
+                if (self._state == ConnectionState.BUSY
+                        and self._session_metadata is not None):
+                    result.update(copy.deepcopy(self._session_metadata))
+                    result["target"]["state"] = "busy"
+                    result["target"]["locked"] = self._target_locked
+                    return result
                 target, probe = self._session.target, self._session.probe
                 # A GDB server accesses the probe from its own thread. Never
                 # perform competing hardware reads from the state poller.
@@ -377,6 +388,10 @@ class WebController:
                     "product": probe.product_name,
                     "protocol": probe.wire_protocol.name.lower() if probe.wire_protocol else None,
                     "frequency": self._session.options.get("frequency"),
+                }
+                self._session_metadata = {
+                    "target": copy.deepcopy(result["target"]),
+                    "probe": copy.deepcopy(result["probe"]),
                 }
             return result
 
@@ -542,6 +557,7 @@ class WebController:
                 elif session:
                     session.close()
                 self._session, self._console = None, None
+                self._session_metadata = None
                 raise
 
     def pulse_probe_reset(self, profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -604,6 +620,7 @@ class WebController:
             self._session.close()
         self._session, self._console = None, None
         self._target_locked = None
+        self._session_metadata = None
         self._cleanup_attached_elf_locked()
         self._state, self._error = ConnectionState.DISCONNECTED, None
 
@@ -780,17 +797,16 @@ class WebController:
         job = Job(uuid.uuid4().hex, kind)
         job.events.append({"time": job.created_at, "level": "INFO",
                            "logger": "pyocd.web", "message": f"{kind.title()} queued"})
-        self._jobs[job.id] = job
+        # Reserve exclusive target ownership before returning the accepted job to
+        # the browser. Otherwise direct controls can slip in before the worker gets
+        # scheduled and marks the controller busy.
+        with self._lock:
+            self._require_exclusive()
+            self._state, job.state, job.message = (
+                ConnectionState.BUSY, "running", "Starting")
+            self._jobs[job.id] = job
 
         def runner() -> None:
-            with self._lock:
-                try:
-                    self._require_exclusive()
-                    self._state, job.state, job.message = ConnectionState.BUSY, "running", "Starting"
-                except Exception as exc:
-                    job.state, job.error, job.message = "failed", str(exc), "Failed"
-                    job.finished_at = time.time()
-                    return
             handler = JobLogHandler(job, self._lock)
             logging.getLogger("pyocd").addHandler(handler)
             try:
@@ -804,6 +820,8 @@ class WebController:
                     job.state, job.error, job.message = "failed", str(exc), "Failed"
                     job.events.append({"time": time.time(), "level": "ERROR",
                                        "logger": "pyocd.web", "message": str(exc)})
+                    logging.getLogger(__name__).exception(
+                        "%s job failed: %s", kind.title(), exc)
             finally:
                 logging.getLogger("pyocd").removeHandler(handler)
                 with self._lock:
@@ -831,6 +849,10 @@ class WebController:
 
         def work(job: Job) -> None:
             session = self._require_session()
+            # Match the load command's default pre-program reset. A long-lived web
+            # session may have left the core running or peripherals in a state that
+            # prevents the RAM flash algorithm from starting reliably.
+            session.target.reset_and_halt()
             count = len(artifacts)
             for index, (artifact, image) in enumerate(artifacts):
                 with self._lock:
@@ -843,7 +865,7 @@ class WebController:
                     job.message = f"Programming {artifact['name']} · {total * 100:.0f}%"
                 # Only the first image may use chip erase. Following images use sector erase
                 # so a bootloader programmed first cannot be erased by the application image.
-                erase_mode = options.get("erase", "auto") if index == 0 else "sector"
+                erase_mode = options.get("erase", "sector") if index == 0 else "sector"
                 programmer = FileProgrammer(
                     session, progress=progress, chip_erase=erase_mode,
                     trust_crc=options.get("trust_crc", False),
@@ -853,14 +875,45 @@ class WebController:
                 if base_address not in (None, ""):
                     kwargs["base_address"] = int(str(base_address), 0)
                 programmer.program(artifact["path"], **kwargs)
+            # Flash contents are committed at this point. Keep post-action failures
+            # from making a successful program operation look partially complete.
+            with self._lock:
+                job.progress = 1.0
+                job.message = "Programming complete"
             post = options.get("post_action", "reset")
-            if post == "reset":
-                session.target.reset()
-            elif post == "halt":
-                session.target.reset_and_halt()
-            elif post == "run":
-                session.target.reset()
-                session.target.resume()
+            try:
+                if post == "reset":
+                    session.target.reset()
+                elif post == "halt":
+                    session.target.reset_and_halt()
+                elif post == "run":
+                    session.target.reset()
+                    session.target.resume()
+            except TransferError as exc:
+                # Match the load command: reset can momentarily remove the DAP even
+                # though all flash writes completed successfully. The long-lived web
+                # session cannot safely remain connected after failed DAP recovery,
+                # so close it and report a completed job with a warning.
+                warning = f"Programming succeeded; post-program {post} lost debug access: {exc}"
+                logging.getLogger(__name__).warning(warning)
+                try:
+                    if not session.options.is_set("resume_on_disconnect"):
+                        session.options.set("resume_on_disconnect", False)
+                    session.context_state.suppress_disconnect_error = True
+                except AttributeError:
+                    pass
+                try:
+                    session.close()
+                except Exception as close_exc:
+                    logging.getLogger(__name__).debug(
+                        "Ignoring session close error after lost post-reset DAP: %s",
+                        close_exc)
+                finally:
+                    with self._lock:
+                        if self._session is session:
+                            self._session, self._console = None, None
+                            self._session_metadata = None
+                            self._target_locked = None
         return self.start_job("program", work)
 
     def erase(self, mode: str, addresses: Any = None) -> Dict[str, Any]:

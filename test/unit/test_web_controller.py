@@ -6,6 +6,7 @@ import pytest
 
 from pyocd.web.controller import WebController, WebError
 from pyocd.web import controller as web_controller
+from pyocd.core.exceptions import TransferError
 from pyocd.core.target import Target
 from pyocd.tools import lists
 
@@ -85,6 +86,28 @@ def test_job_progress_remains_observable(tmp_path, monkeypatch):
     controller.close()
 
 
+def test_job_reserves_target_before_worker_is_scheduled(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    target = SimpleNamespace(resume=lambda: pytest.fail("target action ran during job"))
+    controller._session = SimpleNamespace(
+        is_open=True, target=target, gdbservers={}, close=lambda: None)
+    controller._session_metadata = {
+        "target": {"state": "halted", "locked": False},
+        "probe": {"unique_id": "probe"},
+    }
+    monkeypatch.setattr(controller._executor, "submit", lambda fn: None)
+
+    job = controller.start_job("program", lambda item: None)
+
+    assert job["state"] == "running"
+    assert controller.snapshot()["state"] == "busy"
+    with pytest.raises(WebError) as error:
+        controller.target_action("resume")
+    assert error.value.code == "operation_busy"
+    controller._session = None
+    controller.close()
+
+
 def test_busy_snapshot_does_not_access_target_hardware(tmp_path):
     controller = WebController(str(tmp_path))
 
@@ -109,6 +132,43 @@ def test_busy_snapshot_does_not_access_target_hardware(tmp_path):
 
     assert snapshot["target"]["state"] == "busy"
     assert snapshot["target"]["locked"] is None
+    controller._session = None
+    controller.close()
+
+
+def test_busy_snapshot_uses_cached_metadata_without_probe_properties(tmp_path):
+    controller = WebController(str(tmp_path))
+
+    class Session:
+        is_open = True
+
+        @property
+        def target(self):
+            pytest.fail("busy snapshot accessed the target")
+
+        @property
+        def probe(self):
+            pytest.fail("busy snapshot accessed the probe")
+
+    controller._session = Session()
+    controller._session_metadata = {
+        "target": {
+            "name": "part", "vendor": "Vendor", "part_number": "Part",
+            "state": "halted", "locked": False, "cores": [0],
+            "selected_core": 0, "memory_map": [],
+        },
+        "probe": {
+            "unique_id": "probe", "vendor": "Vendor", "product": "Probe",
+            "protocol": "swd", "frequency": 1_000_000,
+        },
+    }
+    controller._target_locked = False
+    controller._state = web_controller.ConnectionState.BUSY
+
+    snapshot = controller.snapshot()
+
+    assert snapshot["target"]["state"] == "busy"
+    assert snapshot["probe"]["unique_id"] == "probe"
     controller._session = None
     controller.close()
 
@@ -287,7 +347,10 @@ def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeyp
             self.progress(1.0)
 
     monkeypatch.setattr("pyocd.web.controller.FileProgrammer", Programmer)
-    target = SimpleNamespace(reset=lambda: None)
+    target_calls = []
+    target = SimpleNamespace(
+        reset=lambda: target_calls.append("reset"),
+        reset_and_halt=lambda: target_calls.append("reset-halt"))
     session = SimpleNamespace(is_open=True, target=target, gdbservers={}, close=lambda: None)
     controller._session = session
     controller.program_images([
@@ -299,6 +362,49 @@ def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeyp
 
     assert calls[0][1:] == ("chip", 0x08000000)
     assert calls[1][1:] == ("sector", 0x08008000)
+    assert target_calls == ["reset-halt", "reset"]
+
+
+def test_post_reset_transfer_error_does_not_fail_completed_program(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    artifact = controller.upload("application.elf", b"elf")
+    closed = []
+
+    class Programmer:
+        def __init__(self, session, progress, **kwargs):
+            self.progress = progress
+
+        def program(self, path, **kwargs):
+            self.progress(0.68)
+
+    class Options:
+        def is_set(self, name):
+            return False
+
+        def set(self, name, value):
+            assert (name, value) == ("resume_on_disconnect", False)
+
+    target = SimpleNamespace(
+        reset_and_halt=lambda: None,
+        reset=lambda: (_ for _ in ()).throw(TransferError("No ACK")))
+    session = SimpleNamespace(
+        is_open=True, target=target, options=Options(),
+        context_state=SimpleNamespace(suppress_disconnect_error=False),
+        gdbservers={}, close=lambda: closed.append(True))
+    controller._session = session
+    monkeypatch.setattr("pyocd.web.controller.FileProgrammer", Programmer)
+
+    accepted = controller.program(artifact["id"], {"post_action": "reset"})
+    controller.close()
+    job = next(item for item in controller.snapshot()["jobs"]
+               if item["id"] == accepted["id"])
+
+    assert job["state"] == "completed"
+    assert job["progress"] == 1.0
+    assert job["error"] is None
+    assert any("Programming succeeded" in event["message"] for event in job["events"])
+    assert closed == [True]
+    assert session.context_state.suppress_disconnect_error is True
 
 
 def test_raspberry_pi_gpio_is_hidden_on_windows(tmp_path, monkeypatch):

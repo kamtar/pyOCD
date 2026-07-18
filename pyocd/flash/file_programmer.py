@@ -21,6 +21,7 @@ import logging
 import os
 from typing import (IO, TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Tuple, Union)
 
+from elftools.elf.constants import SH_FLAGS
 from elftools.elf.elffile import ELFFile
 from intelhex import IntelHex
 
@@ -246,15 +247,63 @@ class FileProgrammer(object):
 
         elf = ELFFile(file_obj)
         for segment in elf.iter_segments():
-            addr = segment['p_paddr']
             if segment.header.p_type == 'PT_LOAD' and segment.header.p_filesz != 0:
-                data = bytearray(segment.data())
+                addr, data = self._get_elf_segment_data(elf, segment)
                 LOG.debug("Writing segment LMA:0x%08x, VMA:0x%08x, size %d", addr,
-                          segment['p_vaddr'], segment.header.p_filesz)
+                          segment['p_vaddr'], len(data))
                 try:
                     self._loader.add_data(addr, data)
                 except ValueError as e:
                     LOG.warning("Failed to add data chunk: %s", e)
             else:
+                addr = segment['p_paddr']
                 LOG.debug("Skipping segment LMA:0x%08x, VMA:0x%08x, size %d", addr,
                           segment['p_vaddr'], segment.header.p_filesz)
+
+    @staticmethod
+    def _get_elf_segment_data(elf: ELFFile, segment: Any) -> Tuple[int, bytearray]:
+        """Return the portion of a load segment backed by allocatable sections.
+
+        GNU ld can page-align a ``PT_LOAD`` segment down below the first allocatable
+        section. In that case the segment can include the ELF and program headers plus
+        alignment padding. Those bytes are present for a hosted ELF loader to map, but
+        are not part of the embedded image and must not be programmed to the target.
+
+        Section load addresses are derived from their file offsets within the segment.
+        This preserves the LMA of sections such as ``.data`` whose VMA is in RAM. If an
+        ELF has no usable section table (for example, a stripped executable), the full
+        segment is retained for compatibility.
+        """
+        segment_file_start = segment['p_offset']
+        segment_file_end = segment_file_start + segment['p_filesz']
+        section_ranges = []
+
+        for section in elf.iter_sections():
+            section_size = section['sh_size']
+            if (section_size == 0
+                    or section['sh_type'] == 'SHT_NOBITS'
+                    or not (section['sh_flags'] & SH_FLAGS.SHF_ALLOC)):
+                continue
+
+            section_start = section['sh_offset']
+            section_end = section_start + section_size
+            if section_start >= segment_file_start and section_end <= segment_file_end:
+                section_ranges.append((section_start, section_end))
+
+        segment_data = bytearray(segment.data())
+        if not section_ranges:
+            return segment['p_paddr'], segment_data
+
+        image_file_start = min(start for start, _ in section_ranges)
+        image_file_end = max(end for _, end in section_ranges)
+        leading_byte_count = image_file_start - segment_file_start
+        trailing_byte_count = segment_file_end - image_file_end
+
+        if leading_byte_count or trailing_byte_count:
+            LOG.debug(
+                "Ignoring %d leading and %d trailing non-allocatable bytes in ELF load segment",
+                leading_byte_count, trailing_byte_count)
+
+        image_address = segment['p_paddr'] + leading_byte_count
+        image_size = image_file_end - image_file_start
+        return image_address, segment_data[leading_byte_count:leading_byte_count + image_size]
