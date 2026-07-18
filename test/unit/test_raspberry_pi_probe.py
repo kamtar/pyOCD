@@ -75,6 +75,25 @@ class ScriptedProbe(RaspberryPiProbe):
         return 0, []
 
 
+class OrderingGPIO(BCMGPIO):
+    def __init__(self):
+        super().__init__()
+        self.events = []
+
+    def set_input(self, pin):
+        self.events.append(("input", pin))
+
+    def write(self, pin, value):
+        self.events.append(("write", pin, value))
+
+    def read(self, pin):
+        self.events.append(("read", pin))
+        return True
+
+    def _delay(self):
+        self.events.append(("delay",))
+
+
 def make_session(**overrides):
     options = {
         "rpi_gpio.swclk": 11,
@@ -109,6 +128,19 @@ def test_bcm_gpio_register_operations():
 
     gpio._registers[BCMGPIO._GPLEV0] = 1 << 11
     assert gpio.read(11)
+
+
+def test_swd_input_is_sampled_while_clock_is_low():
+    gpio = OrderingGPIO()
+    assert gpio.swd_read_bits(11, 8, 1) == 1
+    assert gpio.events == [
+        ("input", 8),
+        ("write", 11, False),
+        ("delay",),
+        ("read", 8),
+        ("write", 11, True),
+        ("delay",),
+    ]
 
 
 def test_open_connect_and_restore():

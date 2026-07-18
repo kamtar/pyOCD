@@ -161,9 +161,9 @@ class BCMGPIO:
         for bit_index in range(count):
             self.write(swclk, False)
             self._delay()
-            self.write(swclk, True)
             if self.read(swdio):
                 result |= 1 << bit_index
+            self.write(swclk, True)
             self._delay()
         return result
 
