@@ -2,7 +2,11 @@ import asyncio
 
 from aiohttp.test_utils import TestClient, TestServer
 
-from pyocd.web.application import create_application
+from pyocd.web.application import (
+    DEFAULT_AUTH_TOKEN,
+    _effective_auth_token,
+    create_application,
+)
 from pyocd.web.controller import WebController
 
 CSRF = {"X-pyOCD-CSRF": "1"}
@@ -24,6 +28,38 @@ def test_health_and_frontend(tmp_path):
             index = await client.get("/")
             assert index.status == 200
             assert "pyOCD Control Center" in await index.text()
+        finally:
+            await client.close()
+    run(scenario())
+
+
+def test_system_information_route(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        controller.system_info = lambda: {
+            "pyocd_version": "1.0", "hostname": "debug-host", "addresses": ["192.0.2.1"]}
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            response = await client.get("/api/v1/system")
+            assert response.status == 200
+            assert (await response.json())["hostname"] == "debug-host"
+        finally:
+            await client.close()
+    run(scenario())
+
+
+def test_update_check_route(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        controller.check_for_update = lambda: {
+            "current": "1.0", "latest": "1.1", "update_available": True}
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            response = await client.get("/api/v1/update/check")
+            assert response.status == 200
+            assert (await response.json())["update_available"] is True
         finally:
             await client.close()
     run(scenario())
@@ -55,6 +91,15 @@ def test_api_authentication(tmp_path):
         finally:
             await client.close()
     run(scenario())
+
+
+def test_default_authentication_policy():
+    assert DEFAULT_AUTH_TOKEN == "cutter"
+    assert _effective_auth_token("127.0.0.1", None, False) is None
+    assert _effective_auth_token("localhost", None, False) is None
+    assert _effective_auth_token("0.0.0.0", None, False) == "cutter"
+    assert _effective_auth_token("0.0.0.0", None, True) is None
+    assert _effective_auth_token("127.0.0.1", "secret", False) == "secret"
 
 
 def test_configuration_round_trip(tmp_path):

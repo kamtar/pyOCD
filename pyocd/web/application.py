@@ -15,6 +15,21 @@ from .controller import WebController, WebError
 LOG = logging.getLogger(__name__)
 MAX_UPLOAD = 128 * 1024 * 1024
 MAX_DUMP = 512 * 1024 * 1024
+DEFAULT_AUTH_TOKEN = "cutter"
+DEFAULT_GDB_PORT = 3030
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_loopback_host(host: str) -> bool:
+    return host in LOOPBACK_HOSTS
+
+
+def _effective_auth_token(host: str, token: Optional[str], insecure: bool) -> Optional[str]:
+    if token:
+        return token
+    if insecure or _is_loopback_host(host):
+        return None
+    return DEFAULT_AUTH_TOKEN
 
 
 def create_application(
@@ -99,11 +114,28 @@ def create_application(
     async def health(request):
         return web.json_response({"status": "ok"})
 
+    async def system_info(request):
+        return web.json_response(await asyncio.to_thread(ctrl.system_info))
+
+    async def update_check(request):
+        return web.json_response(await asyncio.to_thread(ctrl.check_for_update))
+
     async def probes(request):
         return web.json_response(await asyncio.to_thread(ctrl.probes))
 
     async def targets(request):
         return web.json_response(await asyncio.to_thread(ctrl.targets, request.query.get("q")))
+
+    async def pack_search(request):
+        return web.json_response(await asyncio.to_thread(
+            ctrl.pack_search, request.query.get("q", ""), int(request.query.get("limit", 100))))
+
+    async def pack_update(request):
+        return web.json_response(await asyncio.to_thread(ctrl.pack_update))
+
+    async def pack_install(request):
+        data = await body(request)
+        return web.json_response(await asyncio.to_thread(ctrl.pack_install, str(data.get("device", ""))))
 
     async def connect(request):
         return web.json_response(await asyncio.to_thread(ctrl.connect, await body(request)))
@@ -195,7 +227,7 @@ def create_application(
 
     async def gdb_start(request):
         data = await body(request)
-        return web.json_response(await asyncio.to_thread(ctrl.gdb_start, int(data.get("port", 3333)), data.get("cores")))
+        return web.json_response(await asyncio.to_thread(ctrl.gdb_start, int(data.get("port", DEFAULT_GDB_PORT)), data.get("cores")))
 
     async def gdb_stop(request):
         return web.json_response(await asyncio.to_thread(ctrl.gdb_stop))
@@ -203,7 +235,7 @@ def create_application(
     async def debug_start(request):
         data = await body(request)
         return web.json_response(await asyncio.to_thread(
-            ctrl.debug_start, int(data.get("core", 0)), int(data.get("port", 3333))))
+            ctrl.debug_start, int(data.get("core", 0)), int(data.get("port", DEFAULT_GDB_PORT))))
 
     async def debug_stop(request):
         return web.json_response(await asyncio.to_thread(ctrl.debug_stop))
@@ -256,8 +288,13 @@ def create_application(
 
     routes = [
         web.get("/api/v1/state", state), web.get("/api/v1/health", health),
+        web.get("/api/v1/system", system_info),
+        web.get("/api/v1/update/check", update_check),
         web.get("/api/v1/config", configuration), web.put("/api/v1/config", configuration),
         web.get("/api/v1/probes", probes), web.get("/api/v1/targets", targets),
+        web.get("/api/v1/packs/devices", pack_search),
+        web.post("/api/v1/packs/index", pack_update),
+        web.post("/api/v1/packs/install", pack_install),
         web.post("/api/v1/session/connect",
                  connect), web.post("/api/v1/session/disconnect", disconnect),
         web.post("/api/v1/target/{action}", target_action), web.get(
@@ -301,10 +338,7 @@ def run_webserver(host: str = "127.0.0.1", port: int = 8080, token: Optional[str
                   artifact_dir: Optional[str] = None, unsafe_console: bool = False,
                   insecure: bool = False, gdb_executable: Optional[str] = None) -> None:
     from aiohttp import web
-    if host not in ("127.0.0.1", "localhost",
-                    "::1") and not token and not insecure:
-        raise RuntimeError(
-            "Remote binding requires --auth-token or explicit --insecure")
+    effective_token = _effective_auth_token(host, token, insecure)
     controller = WebController(
         artifact_dir=artifact_dir,
         unsafe_console=unsafe_console,
@@ -313,8 +347,8 @@ def run_webserver(host: str = "127.0.0.1", port: int = 8080, token: Optional[str
     web.run_app(
         create_application(
             controller,
-            token,
-            local_only=host in ("127.0.0.1", "localhost", "::1")),
+            effective_token,
+            local_only=_is_loopback_host(host)),
         host=host,
         port=port,
         print=None,

@@ -6,17 +6,24 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from io import StringIO
+from importlib import metadata
 import json
 import logging
+import os
+import platform
 from pathlib import Path
 import re
+import socket
 import sys
 import tempfile
 import threading
 import time
 import uuid
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from typing import Any, Callable, Dict, Optional
 
+from .. import __version__
 from ..commands.execution_context import CommandExecutionContext
 from ..core.helpers import ConnectHelper
 from ..core.session import Session
@@ -24,7 +31,13 @@ from ..flash.eraser import FlashEraser
 from ..flash.file_programmer import FileProgrammer
 from ..gdbserver import GDBServer
 from ..tools.lists import ListGenerator
+from ..target.pack import pack_target
 from .gdb_mi import GdbMiClient, GdbMiError, MiRecord, quote_mi
+
+try:
+    import cmsis_pack_manager
+except ImportError:
+    cmsis_pack_manager = None
 
 
 class WebError(RuntimeError):
@@ -83,6 +96,8 @@ class WebController:
             self, artifact_dir: Optional[str] = None, unsafe_console: bool = False,
             gdb_executable: Optional[str] = None, config_path: Optional[str] = None):
         self._lock = threading.RLock()
+        self._pack_lock = threading.Lock()
+        self._pack_cache_instance = None
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="pyocd-web")
         self._session: Optional[Session] = None
@@ -112,6 +127,7 @@ class WebController:
                 prefix="pyocd-web-"))
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
         self.unsafe_console = unsafe_console
+        self._started_at = time.time()
 
     def _load_profile(self) -> Dict[str, Any]:
         try:
@@ -124,10 +140,10 @@ class WebController:
         """Persist connection settings independently of a probe connection."""
         if not isinstance(profile, dict):
             raise WebError("invalid_config", "Configuration must be a JSON object")
-        if profile.get("target_override") == "cortex_m":
-            raise WebError(
-                "generic_target_unsupported",
-                "The web interface requires a specific target MCU")
+        interface_name = profile.get("interface_name")
+        if interface_name is not None and (not isinstance(interface_name, str)
+                                           or len(interface_name.strip()) > 48):
+            raise WebError("invalid_interface_name", "Interface name must be at most 48 characters")
         with self._lock:
             self._profile = profile
             try:
@@ -155,6 +171,97 @@ class WebController:
     def clear_logs(self) -> None:
         with self._lock:
             self._log_handler.records.clear()
+
+    @staticmethod
+    def _memory_info() -> Dict[str, Optional[int]]:
+        """Return system and process memory figures without requiring psutil."""
+        try:
+            if sys.platform == "win32":
+                import ctypes
+                from ctypes import wintypes
+
+                class MemoryStatus(ctypes.Structure):
+                    _fields_ = [("length", wintypes.DWORD), ("load", wintypes.DWORD),
+                                ("total", ctypes.c_ulonglong), ("available", ctypes.c_ulonglong),
+                                ("total_page", ctypes.c_ulonglong), ("available_page", ctypes.c_ulonglong),
+                                ("total_virtual", ctypes.c_ulonglong), ("available_virtual", ctypes.c_ulonglong),
+                                ("available_extended", ctypes.c_ulonglong)]
+
+                class ProcessMemory(ctypes.Structure):
+                    _fields_ = [("cb", wintypes.DWORD), ("page_faults", wintypes.DWORD),
+                                ("peak_working_set", ctypes.c_size_t), ("working_set", ctypes.c_size_t),
+                                ("peak_paged_pool", ctypes.c_size_t), ("paged_pool", ctypes.c_size_t),
+                                ("peak_nonpaged_pool", ctypes.c_size_t), ("nonpaged_pool", ctypes.c_size_t),
+                                ("pagefile", ctypes.c_size_t), ("peak_pagefile", ctypes.c_size_t)]
+
+                memory = MemoryStatus()
+                memory.length = ctypes.sizeof(memory)
+                ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory))
+                process = ProcessMemory()
+                process.cb = ctypes.sizeof(process)
+                ctypes.windll.psapi.GetProcessMemoryInfo(
+                    ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(process), process.cb)
+                return {"system_total": memory.total,
+                        "system_used": memory.total - memory.available,
+                        "process_used": process.working_set}
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            pages = os.sysconf("SC_PHYS_PAGES")
+            available = os.sysconf("SC_AVPHYS_PAGES")
+            import resource
+            process = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            if sys.platform != "darwin":
+                process *= 1024
+            return {"system_total": page_size * pages,
+                    "system_used": page_size * (pages - available), "process_used": process}
+        except (AttributeError, ImportError, OSError):
+            return {"system_total": None, "system_used": None, "process_used": None}
+
+    def system_info(self) -> Dict[str, Any]:
+        hostname = socket.gethostname()
+        try:
+            addresses = sorted({item[4][0] for item in socket.getaddrinfo(hostname, None)
+                                if item[4][0] not in {"127.0.0.1", "::1"}})
+        except socket.gaierror:
+            addresses = []
+        return {"pyocd_version": __version__, "python_version": platform.python_version(),
+                "platform": platform.platform(), "hostname": hostname, "addresses": addresses,
+                "pid": os.getpid(), "uptime": max(0, time.time() - self._started_at),
+                "memory": self._memory_info()}
+
+    def check_for_update(self) -> Dict[str, Any]:
+        """Check this fork's main branch without modifying the installation."""
+        request = urlrequest.Request(
+            "https://api.github.com/repos/kamtar/pyOCD/commits/main",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "pyOCD-web"})
+        try:
+            with urlrequest.urlopen(request, timeout=8) as response:
+                head = json.loads(response.read().decode("utf-8"))
+        except (OSError, ValueError, urlerror.URLError) as exc:
+            raise WebError("update_check_failed", f"Unable to check for updates: {exc}", 502) from exc
+        latest_revision = str(head.get("sha", ""))
+        if not latest_revision:
+            raise WebError("update_check_failed", "GitHub did not return the main revision", 502)
+        source, current_revision = "Unknown installation source", None
+        command = ("python -m pip install --upgrade --force-reinstall "
+                   "\"git+https://github.com/kamtar/pyOCD.git@main\"")
+        try:
+            direct = json.loads(metadata.distribution("pyocd").read_text("direct_url.json") or "{}")
+            url = str(direct.get("url", ""))
+            if "github.com/kamtar/pyocd" in url.lower():
+                current_revision = direct.get("vcs_info", {}).get("commit_id")
+                source = "GitHub fork (kamtar/pyOCD)"
+            elif direct.get("dir_info", {}).get("editable"):
+                source = "Editable local checkout"
+            elif url:
+                source = url
+        except (metadata.PackageNotFoundError, ValueError):
+            pass
+        return {"current": __version__, "current_revision": current_revision,
+                "latest_revision": latest_revision,
+                "update_available": (current_revision.lower() != latest_revision.lower()
+                                     if current_revision else None),
+                "release_url": str(head.get("html_url", "https://github.com/kamtar/pyOCD/commits/main")),
+                "install_source": source, "command": command}
 
     def _record_activity_locked(self, kind: str, message: str) -> None:
         now = time.time()
@@ -247,6 +354,65 @@ class WebController:
             target for target in result.get("targets", [])
             if target.get("name") != "cortex_m"]
         return result
+
+    def _pack_cache(self):
+        if cmsis_pack_manager is None:
+            raise WebError("pack_manager_unavailable",
+                           "Open-CMSIS-Pack support requires cmsis-pack-manager", 501)
+        if self._pack_cache_instance is None:
+            self._pack_cache_instance = cmsis_pack_manager.Cache(True, False)
+        return self._pack_cache_instance
+
+    def pack_search(self, query: str, limit: int = 100) -> Dict[str, Any]:
+        query = query.strip().lower()
+        if len(query) < 2:
+            raise WebError("pack_query_too_short", "Enter at least two characters")
+        with self._pack_lock:
+            cache = self._pack_cache()
+            if not cache.index:
+                return {"devices": [], "index_available": False}
+            devices = []
+            for key, info in cache.index.items():
+                name = str(info.get("name", key))
+                vendor = str(info.get("vendor", "")).split(":", 1)[0]
+                if query not in name.lower() and query not in vendor.lower():
+                    continue
+                refs = list(cache.packs_for_devices([info]))
+                if not refs:
+                    continue
+                ref = refs[0]
+                installed = os.path.isfile(os.path.join(cache.data_path, ref.get_pack_name()))
+                devices.append({"name": name, "vendor": vendor,
+                                "pack": f"{ref.vendor}.{ref.pack}", "version": str(ref.version),
+                                "installed": installed})
+                if len(devices) >= min(max(limit, 1), 500):
+                    break
+        devices.sort(key=lambda item: (item["name"].lower(), item["pack"].lower()))
+        return {"devices": devices, "index_available": True}
+
+    def pack_update(self) -> Dict[str, Any]:
+        with self._pack_lock:
+            cache = self._pack_cache()
+            cache.cache_descriptors()
+            return {"updated": True, "device_count": len(cache.index)}
+
+    def pack_install(self, device_name: str) -> Dict[str, Any]:
+        with self._pack_lock:
+            cache = self._pack_cache()
+            if not cache.index:
+                raise WebError("pack_index_missing", "Refresh the pack index before installing", 409)
+            match = next((info for key, info in cache.index.items()
+                          if key.lower() == device_name.lower()
+                          or str(info.get("name", "")).lower() == device_name.lower()), None)
+            if match is None:
+                raise WebError("pack_device_not_found", "Device is not present in the pack index", 404)
+            refs = list(cache.packs_for_devices([match]))
+            if not refs:
+                raise WebError("pack_not_found", "No pack provides this device", 404)
+            cache.download_pack_list(refs)
+        name = str(match.get("name", device_name))
+        pack_target.ManagedPacks.populate_target(name)
+        return {"installed": True, "device": name, "packs": [str(ref) for ref in refs]}
 
     def connect(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(profile, dict):
@@ -593,7 +759,7 @@ class WebController:
         return self.start_job("erase", lambda job: FlashEraser(
             self._require_session(), modes[mode]).erase(addresses))
 
-    def gdb_start(self, port: int = 3333,
+    def gdb_start(self, port: int = 3030,
                   cores: Optional[list[int]] = None) -> Dict[str, Any]:
         with self._lock:
             if self._debugger:
@@ -665,7 +831,7 @@ class WebController:
             self._debugger_state = "running"
             self._debugger_stopped.clear()
 
-    def debug_start(self, core: int = 0, port: int = 3333) -> Dict[str, Any]:
+    def debug_start(self, core: int = 0, port: int = 3030) -> Dict[str, Any]:
         """Start a pyOCD GDB server and the browser-owned GDB/MI client."""
         with self._lock:
             session = self._require_session()

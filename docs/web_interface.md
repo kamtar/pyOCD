@@ -13,10 +13,12 @@ pip install pyocd
 pyocd web
 ```
 
-Open `http://127.0.0.1:8080`. The web process owns the selected probe and any GDB servers it
-starts. Do not run a separate pyOCD process against the same probe.
+Open `http://127.0.0.1:8080`. Loopback binds are unsecured by default. For a non-loopback bind,
+the default API credential is `cutter`; set `--auth-token` or `--auth-token-file` in production.
+The web process owns the selected probe and any GDB servers it starts. Do not run a separate pyOCD
+process against the same probe.
 
-To expose the service on a trusted LAN, authentication is required by default:
+To expose the service on a trusted LAN, replace the default credential:
 
 ```console
 pyocd web --host 0.0.0.0 --auth-token-file /etc/pyocd/web-token
@@ -25,13 +27,14 @@ pyocd web --host 0.0.0.0 --auth-token-file /etc/pyocd/web-token
 Use HTTPS at a reverse proxy when traffic leaves the device. `--insecure` permits an unauthenticated
 remote bind and is intended only for isolated development networks.
 
-Tokenless local API clients must send `X-pyOCD-CSRF: 1` with POST, PUT, PATCH, and DELETE requests.
-The browser interface adds this header automatically. Bearer-authenticated API clients do not need it.
+Tokenless API clients on loopback or in `--insecure` mode must send `X-pyOCD-CSRF: 1` with POST, PUT,
+PATCH, and DELETE requests. The browser interface adds this header automatically. Bearer-authenticated
+API clients do not need it.
 
 ## Raspberry Pi GPIO
 
 Select **Raspberry Pi GPIO SWD** on the Connection page. The GPIO fields use BCM numbering.
-The interface exposes SWCLK, SWDIO, optional nRESET, and frequency. Raspberry Pi Zero through Pi 4
+The defaults are SWCLK 20, SWDIO 21, and nRESET 16. The interface also exposes frequency. Raspberry Pi Zero through Pi 4
 are supported; Pi 5 is not supported by the current backend. Use 3.3 V logic and a shared ground.
 
 ## Target ownership

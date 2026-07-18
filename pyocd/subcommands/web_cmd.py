@@ -24,7 +24,7 @@ class WebSubcommand(SubcommandBase):
             default=8080,
             help="HTTP port (default: 8080).")
         parser.add_argument("--auth-token",
-                            help="Bearer token required for API access.")
+                            help="Bearer token for API access (default for non-loopback binds: cutter; loopback is unsecured).")
         parser.add_argument("--auth-token-file",
                             help="Read the bearer token from this file.")
         parser.add_argument(
@@ -50,10 +50,6 @@ class WebSubcommand(SubcommandBase):
             token = Path(
                 self._args.auth_token_file).read_text(
                 encoding="utf-8").strip()
-        if self._args.host not in (
-                "127.0.0.1", "localhost", "::1") and not token and not self._args.insecure:
-            self.parser.error(
-                "remote binding requires --auth-token, --auth-token-file, or --insecure")
         run_webserver(self._args.host, self._args.port, token,
                       self._args.artifact_dir, self._args.unsafe_console,
                       self._args.insecure, self._args.gdb_executable)

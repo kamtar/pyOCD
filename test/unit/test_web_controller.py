@@ -98,9 +98,43 @@ def test_logs_can_be_cleared(tmp_path):
     controller.close()
 
 
+def test_pack_catalog_search_and_install(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    ref = SimpleNamespace(vendor="Keil", pack="STM32F4xx_DFP", version="2.17.1",
+                          get_pack_name=lambda: "Keil.STM32F4xx_DFP.pack")
+
+    class Cache:
+        data_path = str(tmp_path)
+        index = {"STM32F401RE": {
+            "name": "STM32F401RE", "vendor": "STMicroelectronics:13"}}
+
+        def packs_for_devices(self, devices):
+            return [ref]
+
+        def download_pack_list(self, refs):
+            self.downloaded = refs
+
+    cache = Cache()
+    populated = []
+    monkeypatch.setattr(controller, "_pack_cache", lambda: cache)
+    monkeypatch.setattr(
+        "pyocd.web.controller.pack_target.ManagedPacks.populate_target", populated.append)
+
+    result = controller.pack_search("f401")
+    installed = controller.pack_install("stm32f401re")
+
+    assert result["devices"] == [{
+        "name": "STM32F401RE", "vendor": "STMicroelectronics",
+        "pack": "Keil.STM32F4xx_DFP", "version": "2.17.1", "installed": False}]
+    assert installed["device"] == "STM32F401RE"
+    assert cache.downloaded == [ref]
+    assert populated == ["STM32F401RE"]
+    controller.close()
+
+
 def test_connection_profile_is_persisted_and_reloaded(tmp_path):
     config = tmp_path / "web.json"
-    profile = {"target_override": "stm32f103rc", "gpio": {
+    profile = {"interface_name": "Lab bench", "target_override": "stm32f103rc", "gpio": {
         "swclk": 11, "swdio": 8, "nreset": 25}}
     controller = WebController(str(tmp_path / "artifacts"), config_path=str(config))
     controller.save_profile(profile)
@@ -109,6 +143,21 @@ def test_connection_profile_is_persisted_and_reloaded(tmp_path):
     restored = WebController(str(tmp_path / "artifacts2"), config_path=str(config))
     assert restored.snapshot()["profile"] == profile
     restored.close()
+
+
+def test_interface_name_length_is_limited(tmp_path):
+    controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
+    with pytest.raises(WebError) as error:
+        controller.save_profile({"interface_name": "x" * 49})
+    assert error.value.code == "invalid_interface_name"
+    controller.close()
+
+
+def test_profile_can_be_saved_before_specific_mcu_is_selected(tmp_path):
+    controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
+    saved = controller.save_profile({"interface_name": "Bench", "target_override": "cortex_m"})
+    assert saved["interface_name"] == "Bench"
+    controller.close()
 
 
 def test_target_actions_work_without_browser_debugger(tmp_path, monkeypatch):

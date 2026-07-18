@@ -4,8 +4,10 @@
   "frequency": 1000000,
   "connect_mode": "halt",
   "gpio": {
-    "swclk": 11,
-    "swdio": 8,
+    "swclk": 20,
+    "swdio": 21,
+    "nreset": 16,
     "restore_pins": true
-  }
+  },
+  "interface_name": "local"
 }
