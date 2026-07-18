@@ -205,6 +205,17 @@ def test_connection_profile_is_persisted_and_reloaded(tmp_path):
     restored.close()
 
 
+def test_connection_defaults_come_from_core_options(tmp_path):
+    controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
+
+    assert controller.snapshot()["connection_defaults"] == {
+        "frequency": 1_000_000,
+        "connect_mode": "halt",
+        "dap_protocol": "default",
+    }
+    controller.close()
+
+
 def test_interface_name_length_is_limited(tmp_path):
     controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
     with pytest.raises(WebError) as error:
@@ -311,6 +322,42 @@ def test_connect_requires_explicit_probe_selection(tmp_path, monkeypatch):
         controller.connect({"target_override": "stm32f103rc"})
 
     assert error.value.code == "probe_required"
+    controller.close()
+
+
+def test_probe_reset_opens_adapter_without_initialising_target(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
+    calls = []
+
+    class Probe:
+        unique_id = "probe"
+
+        def reset(self):
+            calls.append("reset")
+
+    class ProbeSession:
+        def __init__(self, probe, auto_open, options):
+            calls.append(("session", auto_open, options))
+
+        def open(self, init_board=True):
+            calls.append(("open", init_board))
+
+        def close(self):
+            calls.append("close")
+
+    monkeypatch.setattr(
+        "pyocd.web.controller.ConnectHelper.choose_probe", lambda **kwargs: Probe())
+    monkeypatch.setattr("pyocd.web.controller.Session", ProbeSession)
+
+    result = controller.pulse_probe_reset({
+        "probe": "probe", "frequency": 1_000_000,
+        "gpio": {"nreset": 16, "swclk": 20, "swdio": 21},
+    })
+
+    assert result == {"reset": True, "probe": "probe"}
+    assert ("open", False) in calls
+    assert "reset" in calls
+    assert calls[-1] == "close"
     controller.close()
 
 

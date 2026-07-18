@@ -147,6 +147,10 @@ def create_application(
     async def disconnect(request):
         return web.json_response(await asyncio.to_thread(ctrl.disconnect))
 
+    async def probe_reset(request):
+        return web.json_response(await asyncio.to_thread(
+            ctrl.pulse_probe_reset, await body(request)))
+
     async def target_action(request):
         return web.json_response(await asyncio.to_thread(
             ctrl.target_action, request.match_info["action"]))
@@ -302,6 +306,7 @@ def create_application(
         web.post("/api/v1/packs/install", pack_install),
         web.post("/api/v1/session/connect",
                  connect), web.post("/api/v1/session/disconnect", disconnect),
+        web.post("/api/v1/probe/reset", probe_reset),
         web.post("/api/v1/target/{action}", target_action), web.get(
             "/api/v1/cores/{core}/registers", registers),
         web.post("/api/v1/memory/read",

@@ -3,12 +3,12 @@
   "target_override": "lpc4088",
   "frequency": 1000000,
   "connect_mode": "halt",
+  "dap_protocol": "default",
   "gpio": {
     "swclk": 20,
     "swdio": 21,
     "restore_pins": true,
     "nreset": 16
   },
-  "interface_name": "local",
-  "dap_protocol": "swd"
+  "interface_name": "local"
 }

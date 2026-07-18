@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, Optional
 from .. import __version__
 from ..commands.execution_context import CommandExecutionContext
 from ..core.helpers import ConnectHelper
+from ..core.options import OPTIONS_INFO
 from ..core.session import Session
 from ..flash.eraser import FlashEraser
 from ..flash.file_programmer import FileProgrammer
@@ -110,6 +111,12 @@ class WebController:
     """Owns the sole active Session and serialises access to the probe."""
 
     MAX_MEMORY_READ = 1024 * 1024
+    # Publish the actual Session defaults so the browser does not maintain a
+    # second, potentially divergent set of connection defaults.
+    CONNECTION_DEFAULTS = {
+        name: OPTIONS_INFO[name].default
+        for name in ("frequency", "connect_mode", "dap_protocol")
+    }
     SAFE_SESSION_OPTIONS = {
         "auto_unlock", "connect_mode", "dap_protocol", "frequency",
         "reset_type", "resume_on_disconnect",
@@ -319,6 +326,7 @@ class WebController:
                 "state": self._state.value,
                 "error": self._error,
                 "profile": self._profile,
+                "connection_defaults": self.CONNECTION_DEFAULTS,
                 "connected": self._session is not None and self._session.is_open,
                 "gdb": [{"core": c, "port": s.port, "running": s.is_alive(),
                          "clients": len(s.client_sessions)} for c, s in self._gdb.items()],
@@ -535,6 +543,50 @@ class WebController:
                     session.close()
                 self._session, self._console = None, None
                 raise
+
+    def pulse_probe_reset(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        """Pulse the selected probe's nRESET pin without connecting to the target."""
+        if not isinstance(profile, dict):
+            raise WebError("invalid_profile", "Connection profile must be a JSON object")
+        with self._lock:
+            if self._state == ConnectionState.BUSY:
+                raise WebError("operation_busy", "Wait for the active operation to finish", 409)
+            if self._session and self._session.is_open:
+                raise WebError("already_connected", "Disconnect before pulsing the probe reset pin", 409)
+            selector = profile.get("probe") or None
+            if selector is None:
+                raise WebError("probe_required", "Select a debug probe first")
+            probe = ConnectHelper.choose_probe(
+                blocking=False, return_first=True, unique_id=selector)
+            if probe is None:
+                raise WebError("probe_not_found", "The selected debug probe is not available", 404)
+
+            options: Dict[str, Any] = {}
+            if profile.get("frequency") is not None:
+                options["frequency"] = profile["frequency"]
+            gpio = profile.get("gpio") or {}
+            if not isinstance(gpio, dict):
+                raise WebError("invalid_gpio", "GPIO settings must be a JSON object")
+            for key in ("swclk", "swdio", "nreset", "swdio_dir",
+                        "restore_pins", "wait_retries"):
+                if key in gpio:
+                    options["rpi_gpio." + key] = gpio[key]
+
+            session = Session(probe, auto_open=False, options=options)
+            try:
+                # This opens only the adapter. init_board=False deliberately avoids
+                # target discovery and any SWD/JTAG connection sequence.
+                session.open(init_board=False)
+                probe.reset()
+            except NotImplementedError as exc:
+                raise WebError(
+                    "reset_pin_unsupported",
+                    "The selected debug probe does not support direct reset-pin control",
+                    409) from exc
+            finally:
+                session.close()
+            self._record_activity_locked("probe-reset", "Probe nRESET pin pulsed")
+            return {"reset": True, "probe": probe.unique_id}
 
     def disconnect(self) -> Dict[str, Any]:
         with self._lock:

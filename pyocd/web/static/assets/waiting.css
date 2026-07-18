@@ -1,0 +1,54 @@
+.waiting-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    background: #02070bb8;
+    backdrop-filter: blur(4px);
+}
+
+.waiting-overlay[hidden] {
+    display: none;
+}
+
+.waiting-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 290px;
+    max-width: calc(100vw - 32px);
+    padding: 22px 25px;
+    border: 1px solid #31566c;
+    border-radius: 14px;
+    background: #111e2c;
+    box-shadow: var(--shadow);
+}
+
+.waiting-card i {
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border: 3px solid #294254;
+    border-top-color: var(--cyan);
+    border-radius: 50%;
+    animation: waiting-spin .8s linear infinite;
+}
+
+.waiting-card div {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.waiting-card b {
+    font-size: 15px;
+}
+
+.waiting-card small {
+    color: var(--muted);
+}
+
+@keyframes waiting-spin {
+    to { transform: rotate(360deg); }
+}

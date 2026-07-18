@@ -49,6 +49,23 @@ def test_system_information_route(tmp_path):
     run(scenario())
 
 
+def test_probe_reset_route(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        controller.pulse_probe_reset = lambda profile: {
+            "reset": True, "probe": profile["probe"]}
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/v1/probe/reset", json={"probe": "adapter"}, headers=CSRF)
+            assert response.status == 200
+            assert await response.json() == {"reset": True, "probe": "adapter"}
+        finally:
+            await client.close()
+    run(scenario())
+
+
 def test_system_power_route(tmp_path):
     async def scenario():
         controller = WebController(str(tmp_path))
