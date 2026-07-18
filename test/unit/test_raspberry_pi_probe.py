@@ -8,7 +8,9 @@ import pytest
 
 from pyocd.core import exceptions
 from pyocd.probe.debug_probe import DebugProbe
+from pyocd.probe.raspberry_pi import gpio as gpio_module
 from pyocd.probe.raspberry_pi.gpio import BCMGPIO
+from pyocd.probe.raspberry_pi.gpio import (NativeBCMGPIO, create_gpio_backend)
 from pyocd.probe.raspberry_pi.probe import RaspberryPiProbe
 
 
@@ -20,6 +22,10 @@ class MockGPIO:
 
     def open(self):
         self.is_open = True
+
+    @property
+    def backend_name(self):
+        return "mock"
 
     def close(self):
         self.is_open = False
@@ -56,6 +62,16 @@ class MockGPIO:
     def swd_read_bits(self, swclk, swdio, count):
         self.calls.append(("read_bits", swclk, swdio, count))
         return (1 << count) - 1
+
+    def execute_swd_sequences(self, swclk, swdio, swdio_dir, sequences):
+        reads = []
+        for sequence in sequences:
+            if len(sequence) == 1:
+                value = self.swd_read_bits(swclk, swdio, sequence[0])
+                reads.append(value.to_bytes((sequence[0] + 7) // 8, "little"))
+            else:
+                self.swd_write_bits(swclk, swdio, sequence[1], sequence[0])
+        return reads
 
 
 class ScriptedProbe(RaspberryPiProbe):
@@ -117,6 +133,12 @@ def test_swd_request_encoding():
     assert RaspberryPiProbe._make_request(True, False, 0x0) == 0xA3
 
 
+def test_gpio_probe_is_explicit_only():
+    assert RaspberryPiProbe.get_all_connected_probes(is_explicit=False) == []
+    assert len(RaspberryPiProbe.get_all_connected_probes(unique_id="", is_explicit=True)) == 1
+    assert RaspberryPiProbe.get_probe_with_id("other", is_explicit=True) is None
+
+
 def test_bcm_gpio_register_operations():
     gpio = BCMGPIO()
     gpio._map = object()
@@ -128,6 +150,30 @@ def test_bcm_gpio_register_operations():
 
     gpio._registers[BCMGPIO._GPLEV0] = 1 << 11
     assert gpio.read(11)
+
+
+def test_backend_auto_falls_back_to_python(monkeypatch):
+    monkeypatch.setattr(gpio_module, "BCMEngine", None)
+    assert create_gpio_backend("auto").backend_name == "python"
+    with pytest.raises(exceptions.ProbeError):
+        create_gpio_backend("native")
+
+
+def test_native_backend_batches_and_encodes_sequences(monkeypatch):
+    class FakeEngine:
+        def __init__(self):
+            self.is_open = False
+            self.transfer_args = None
+
+        def transfer(self, *args):
+            self.transfer_args = args
+            return [b"\x5a"]
+
+    monkeypatch.setattr(gpio_module, "BCMEngine", FakeEngine)
+    gpio = NativeBCMGPIO()
+    reads = gpio.execute_swd_sequences(20, 21, None, ((9, 0x1a5), (8,)))
+    assert reads == [b"\x5a"]
+    assert gpio._engine.transfer_args == (20, 21, -1, [(9, b"\xa5\x01"), (8,)])
 
 
 def test_swd_input_is_sampled_while_clock_is_low():
@@ -175,8 +221,15 @@ def test_swd_sequence_returns_lsb_first_bytes():
     status, reads = probe.swd_sequence(((5, 0b10101), (9,)))
     assert status == 0
     assert reads == [b"\xff\x01"]
-    assert ("write_bits", 11, 8, 0b10101, 5) in gpio.calls
-    assert ("read_bits", 11, 8, 9) in gpio.calls
+    assert ("write_bits", 20, 21, 0b10101, 5) in gpio.calls
+    assert ("read_bits", 20, 21, 9) in gpio.calls
+
+
+def test_swj_sequence_uses_batched_backend():
+    gpio = MockGPIO()
+    probe = RaspberryPiProbe(gpio)
+    probe.swj_sequence(16, 0xE79E)
+    assert gpio.calls == [("write_bits", 20, 21, 0xE79E, 16)]
 
 
 def test_read_dp_checks_ack_and_parity():

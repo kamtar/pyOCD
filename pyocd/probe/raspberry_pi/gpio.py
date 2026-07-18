@@ -8,9 +8,14 @@ import ctypes
 import mmap
 import os
 import time
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional, Sequence, Tuple
 
 from ...core import exceptions
+
+try:
+    from ._bcm_gpio import BCMEngine
+except ImportError:
+    BCMEngine = None
 
 
 class BCMGPIO:
@@ -81,6 +86,7 @@ class BCMGPIO:
         if self._fd is not None:
             os.close(self._fd)
             self._fd = None
+        self._saved_pins.clear()
 
     def set_frequency(self, frequency: float) -> None:
         if frequency <= 0:
@@ -167,6 +173,39 @@ class BCMGPIO:
             self._delay()
         return result
 
+    def execute_swd_sequences(
+            self,
+            swclk: int,
+            swdio: int,
+            swdio_dir: Optional[int],
+            sequences: Sequence[Tuple[int, ...]],
+        ) -> Sequence[bytes]:
+        """Execute raw SWD sequences using the portable Python implementation."""
+        reads = []
+        for sequence in sequences:
+            if len(sequence) == 1:
+                count = sequence[0]
+                self.set_input(swdio)
+                if swdio_dir is not None:
+                    self.write(swdio_dir, False)
+                value = self.swd_read_bits(swclk, swdio, count)
+                reads.append(value.to_bytes((count + 7) // 8, "little"))
+            elif len(sequence) == 2:
+                count, value = sequence
+                if count:
+                    self.write(swdio, bool(value & 1))
+                    self.set_mode(swdio, self._MODE_OUTPUT)
+                    if swdio_dir is not None:
+                        self.write(swdio_dir, True)
+                self.swd_write_bits(swclk, swdio, value, count)
+            else:
+                raise ValueError("SWD sequence entries must contain one or two values")
+        return reads
+
+    @property
+    def backend_name(self) -> str:
+        return "python"
+
     def _delay(self) -> None:
         if self._half_period_ns == 0:
             return
@@ -190,3 +229,104 @@ class BCMGPIO:
     def _validate_pin(cls, pin: int) -> None:
         if not isinstance(pin, int) or isinstance(pin, bool) or not 0 <= pin < cls.PIN_COUNT:
             raise ValueError(f"GPIO number must be between 0 and {cls.PIN_COUNT - 1}")
+
+
+class NativeBCMGPIO(BCMGPIO):
+    """Broadcom GPIO backend using the compiled batched SWD engine."""
+
+    def __init__(self, device: str = "/dev/gpiomem") -> None:
+        if BCMEngine is None:
+            raise RuntimeError("native Raspberry Pi GPIO extension is not available")
+        # Retain saved-pin handling from BCMGPIO, while native code owns the mapping.
+        self._device = device
+        self._saved_pins: Dict[int, Tuple[int, bool]] = {}
+        self._engine = BCMEngine()
+
+    @property
+    def is_open(self) -> bool:
+        return self._engine.is_open
+
+    @property
+    def backend_name(self) -> str:
+        return "native"
+
+    def open(self) -> None:
+        if self.is_open:
+            return
+        if self._is_raspberry_pi_5():
+            raise exceptions.ProbeError(
+                "Raspberry Pi 5 GPIO is not supported by the Broadcom mmap backend"
+            )
+        try:
+            self._engine.open(self._device)
+        except OSError as error:
+            raise exceptions.ProbeError(
+                f"unable to access Raspberry Pi GPIO through {self._device}: {error}"
+            ) from error
+
+    def close(self) -> None:
+        self._engine.close()
+        self._saved_pins.clear()
+
+    def set_frequency(self, frequency: float) -> None:
+        self._engine.set_frequency(frequency)
+
+    def get_mode(self, pin: int) -> int:
+        self._validate_pin(pin)
+        return self._engine.get_mode(pin)
+
+    def set_mode(self, pin: int, mode: int) -> None:
+        self._validate_pin(pin)
+        self._engine.set_mode(pin, mode)
+
+    def write(self, pin: int, value: bool) -> None:
+        self._validate_pin(pin)
+        self._engine.write(pin, value)
+
+    def read(self, pin: int) -> bool:
+        self._validate_pin(pin)
+        return self._engine.read(pin)
+
+    def execute_swd_sequences(
+            self,
+            swclk: int,
+            swdio: int,
+            swdio_dir: Optional[int],
+            sequences: Sequence[Tuple[int, ...]],
+        ) -> Sequence[bytes]:
+        native_sequences = []
+        for sequence in sequences:
+            if len(sequence) == 1:
+                native_sequences.append(sequence)
+            elif len(sequence) == 2:
+                count, value = sequence
+                native_sequences.append((count, value.to_bytes((count + 7) // 8, "little")))
+            else:
+                raise ValueError("SWD sequence entries must contain one or two values")
+        return self._engine.transfer(
+            swclk,
+            swdio,
+            -1 if swdio_dir is None else swdio_dir,
+            native_sequences,
+        )
+
+    def swd_write_bits(self, swclk: int, swdio: int, value: int, count: int) -> None:
+        self.execute_swd_sequences(swclk, swdio, None, ((count, value),))
+
+    def swd_read_bits(self, swclk: int, swdio: int, count: int) -> int:
+        result = self.execute_swd_sequences(swclk, swdio, None, ((count,),))[0]
+        return int.from_bytes(result, "little")
+
+
+def create_gpio_backend(preference: str, device: str = "/dev/gpiomem") -> BCMGPIO:
+    """Create the requested GPIO backend, preferring native execution by default."""
+    preference = preference.lower()
+    if preference not in ("auto", "native", "python"):
+        raise ValueError("rpi_gpio.backend must be 'auto', 'native', or 'python'")
+    if preference in ("auto", "native") and BCMEngine is not None:
+        return NativeBCMGPIO(device)
+    if preference == "native":
+        raise exceptions.ProbeError(
+            "native Raspberry Pi GPIO extension is unavailable; reinstall pyOCD on the Raspberry Pi"
+        )
+    return BCMGPIO(device)

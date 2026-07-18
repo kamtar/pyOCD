@@ -2,6 +2,7 @@
 
 include pyocd/debug/svd/svd_data.zip
 include pyocd/debug/sequences/sequences.lark
+include pyocd/probe/raspberry_pi/_bcm_gpio.c
 recursive-exclude pyocd/debug/svd/data *
 global-exclude __pycache__ *.py[cod] .* .DS_Store
 prune .github

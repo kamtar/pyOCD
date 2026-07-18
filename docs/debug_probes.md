@@ -43,8 +43,8 @@ The default connections use BCM GPIO numbers, not header pin numbers:
 
 Signal | BCM GPIO | Header pin
 -------|----------|-----------
-SWCLK  | 11       | 23
-SWDIO  | 8        | 24
+SWCLK  | 20       | 38
+SWDIO  | 21       | 40
 GND    | -        | 20 (or another ground)
 
 Select the probe and target explicitly, for example:
@@ -56,13 +56,20 @@ pyocd gdbserver --probe rpi-gpio: --target stm32l073rz
 An optional open-drain nRESET GPIO and alternative pin assignments can be configured in `pyocd.yaml`:
 
 ```yaml
-rpi_gpio.swclk: 11
-rpi_gpio.swdio: 8
+rpi_gpio.swclk: 20
+rpi_gpio.swdio: 21
 rpi_gpio.nreset: 24
-frequency: 100000
+frequency: 1000000
 ```
 
-Start with a low SWD frequency and short wiring. Raspberry Pi GPIO uses 3.3 V logic and is not 5 V tolerant. The
+The compiled native backend is selected automatically on Linux. If pyOCD was installed without the native extension,
+the probe logs a warning and uses a much slower Python fallback. Set `rpi_gpio.backend: native` to require native
+operation and fail instead of silently falling back.
+
+After installing pyOCD on the Pi, the startup log should contain `Using Raspberry Pi GPIO native backend`. You can
+also require it from the command line with `-O rpi_gpio.backend=native`; this is recommended for production services.
+
+Start with a moderate SWD frequency and short wiring. Raspberry Pi GPIO uses 3.3 V logic and is not 5 V tolerant. The
 target and Raspberry Pi must share ground, and level translation is required if the target I/O voltage is not
 compatible with the Raspberry Pi.
 

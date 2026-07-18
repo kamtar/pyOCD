@@ -866,8 +866,10 @@ These session options are available when the Raspberry Pi GPIO probe plugin is a
 
 <tr><th>Option Name</th><th>Type</th><th>Default</th><th>Description</th></tr>
 
-<tr><td>rpi_gpio.swclk</td><td>int</td><td>11</td><td>BCM GPIO number used for SWCLK.</td></tr>
-<tr><td>rpi_gpio.swdio</td><td>int</td><td>8</td><td>BCM GPIO number used for SWDIO.</td></tr>
+<tr><td>rpi_gpio.backend</td><td>str</td><td>auto</td><td>Select auto, native, or python GPIO execution. Auto prefers the compiled native backend.</td></tr>
+<tr><td>rpi_gpio.device</td><td>str</td><td>/dev/gpiomem</td><td>Path to the Raspberry Pi gpiomem device.</td></tr>
+<tr><td>rpi_gpio.swclk</td><td>int</td><td>20</td><td>BCM GPIO number used for SWCLK.</td></tr>
+<tr><td>rpi_gpio.swdio</td><td>int</td><td>21</td><td>BCM GPIO number used for SWDIO.</td></tr>
 <tr><td>rpi_gpio.nreset</td><td>int or None</td><td>None</td><td>Optional BCM GPIO used for open-drain nRESET.</td></tr>
 <tr><td>rpi_gpio.swdio_dir</td><td>int or None</td><td>None</td><td>Optional BCM GPIO controlling an external SWDIO direction buffer. High selects host output.</td></tr>
 <tr><td>rpi_gpio.restore_pins</td><td>bool</td><td>True</td><td>Restore GPIO functions and levels when the probe closes.</td></tr>

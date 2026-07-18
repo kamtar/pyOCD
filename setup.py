@@ -16,7 +16,8 @@
 # limitations under the License.
 
 import os
-from setuptools import setup
+import sys
+from setuptools import (Extension, setup)
 import zipfile
 from pathlib import Path
 
@@ -40,4 +41,13 @@ if svd_data_dir_path.exists():
 elif not svd_zip_path.exists():
     raise RuntimeError("neither the source SVD data directory nor built svd_data.zip exist")
 
-setup()
+ext_modules = []
+if sys.platform.startswith("linux"):
+    ext_modules.append(Extension(
+        "pyocd.probe.raspberry_pi._bcm_gpio",
+        sources=["pyocd/probe/raspberry_pi/_bcm_gpio.c"],
+        extra_compile_args=["-O3", "-std=c11"],
+        optional=True,
+    ))
+
+setup(ext_modules=ext_modules)

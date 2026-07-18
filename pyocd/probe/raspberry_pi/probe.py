@@ -5,12 +5,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from time import sleep
 from typing import Callable, Optional, Sequence, Set, Tuple, Union
 
 from ..debug_probe import DebugProbe
-from .gpio import BCMGPIO
+from .gpio import (BCMGPIO, create_gpio_backend)
 from ...core import exceptions
 from ...core.options import OptionInfo
 from ...core.plugin import Plugin
@@ -39,23 +38,21 @@ class RaspberryPiProbe(DebugProbe):
             return []
         if unique_id not in (None, "", cls.UNIQUE_ID):
             return []
-        if not os.path.exists("/dev/gpiomem"):
-            return []
         return [cls()]
 
     @classmethod
     def get_probe_with_id(cls, unique_id: str, is_explicit: bool = False) -> Optional[DebugProbe]:
         if not is_explicit or unique_id not in (None, "", cls.UNIQUE_ID):
             return None
-        return cls() if os.path.exists("/dev/gpiomem") else None
+        return cls()
 
     def __init__(self, gpio: Optional[BCMGPIO] = None) -> None:
         super().__init__()
-        self._gpio = gpio or BCMGPIO()
+        self._gpio = gpio
         self._is_open = False
         self._protocol: Optional[DebugProbe.Protocol] = None
-        self._swclk = 11
-        self._swdio = 8
+        self._swclk = 20
+        self._swdio = 21
         self._nreset: Optional[int] = None
         self._swdio_dir: Optional[int] = None
         self._reset_asserted = False
@@ -106,12 +103,19 @@ class RaspberryPiProbe(DebugProbe):
         self._restore_pins = options.get(self._OPTION_PREFIX + "restore_pins")
         self._wait_retries = options.get(self._OPTION_PREFIX + "wait_retries")
 
+        if self._gpio is None:
+            self._gpio = create_gpio_backend(
+                options.get(self._OPTION_PREFIX + "backend"),
+                options.get(self._OPTION_PREFIX + "device"),
+            )
+
         pins = [self._swclk, self._swdio, self._nreset, self._swdio_dir]
         configured_pins = [pin for pin in pins if pin is not None]
         if len(configured_pins) != len(set(configured_pins)):
             raise exceptions.ProbeError("Raspberry Pi SWD GPIO assignments must be unique")
 
         try:
+            assert self._gpio is not None
             self._gpio.open()
             self._gpio.save_pins(pins)
             self._gpio.set_frequency(options.get("frequency"))
@@ -124,6 +128,11 @@ class RaspberryPiProbe(DebugProbe):
                 self._gpio.write(self._nreset, False)
                 self._gpio.set_input(self._nreset)
             self._is_open = True
+            LOG.info("Using Raspberry Pi GPIO %s backend", self._gpio.backend_name)
+            if self._gpio.backend_name == "python":
+                LOG.warning(
+                    "Native Raspberry Pi GPIO extension is unavailable; SWD performance will be limited"
+                )
         except Exception:
             self._cleanup_gpio()
             raise
@@ -145,26 +154,16 @@ class RaspberryPiProbe(DebugProbe):
         self._protocol = None
 
     def set_clock(self, frequency: float) -> None:
+        assert self._gpio is not None
         self._gpio.set_frequency(frequency)
 
     def swj_sequence(self, length: int, bits: int) -> None:
-        self._set_swdio_output(True)
-        self._gpio.swd_write_bits(self._swclk, self._swdio, bits, length)
+        self.swd_sequence(((length, bits),))
 
     def swd_sequence(self, sequences) -> Tuple[int, Sequence[bytes]]:
-        reads = []
-        for sequence in sequences:
-            if len(sequence) == 1:
-                count = sequence[0]
-                self._set_swdio_output(False)
-                value = self._gpio.swd_read_bits(self._swclk, self._swdio, count)
-                reads.append(value.to_bytes((count + 7) // 8, "little"))
-            elif len(sequence) == 2:
-                count, value = sequence
-                self._set_swdio_output(True)
-                self._gpio.swd_write_bits(self._swclk, self._swdio, value, count)
-            else:
-                raise ValueError("SWD sequence entries must contain one or two values")
+        assert self._gpio is not None
+        reads = self._gpio.execute_swd_sequences(
+            self._swclk, self._swdio, self._swdio_dir, sequences)
         return 0, reads
 
     def reset(self) -> None:
@@ -292,7 +291,9 @@ class RaspberryPiProbe(DebugProbe):
             | (((addr >> 2) & 0x3) << 3) | (parity << 5) | (1 << 7)
 
     def _set_swdio_output(self, output: bool) -> None:
+        assert self._gpio is not None
         if output:
+            self._gpio.set_mode(self._swdio, self._gpio._MODE_OUTPUT)
             if self._swdio_dir is not None:
                 self._gpio.write(self._swdio_dir, True)
         else:
@@ -301,7 +302,7 @@ class RaspberryPiProbe(DebugProbe):
                 self._gpio.write(self._swdio_dir, False)
 
     def _cleanup_gpio(self) -> None:
-        if self._gpio.is_open:
+        if self._gpio is not None and self._gpio.is_open:
             try:
                 if self._restore_pins:
                     self._gpio.restore_pins()
@@ -325,6 +326,10 @@ class RaspberryPiProbePlugin(Plugin):
     @property
     def options(self):
         return [
+            OptionInfo("rpi_gpio.backend", str, "auto",
+                "GPIO backend: auto, native, or python."),
+            OptionInfo("rpi_gpio.device", str, "/dev/gpiomem",
+                "Path to the Raspberry Pi gpiomem device."),
             OptionInfo("rpi_gpio.swclk", int, 20, "BCM GPIO number used for SWCLK."),
             OptionInfo("rpi_gpio.swdio", int, 21, "BCM GPIO number used for SWDIO."),
             OptionInfo("rpi_gpio.nreset", (int, type(None)), None,
