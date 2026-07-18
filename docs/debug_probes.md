@@ -21,6 +21,7 @@ these types of debug probes:
 ---------------------|--------------------
 `cmsisdap`           | [CMSIS-DAP](http://www.keil.com/pack/doc/CMSIS/DAP/html/index.html)
 `picoprobe`          | Raspberry Pi [Picoprobe](https://github.com/raspberrypi/picoprobe)
+`rpi-gpio`           | Raspberry Pi GPIO header (SWD, Pi Zero through Pi 4)
 `jlink`              | [SEGGER](https://segger.com/) [J-Link](https://www.segger.com/products/debug-trace-probes/)
 `stlink`             | [STMicro](https://st.com/) [STLinkV2](https://www.st.com/en/development-tools/st-link-v2.html) and [STLinkV3](https://www.st.com/en/development-tools/stlink-v3set.html)
 `remote`             | pyOCD [remote debug probe client]({% link _docs/remote_probe_access.md %})
@@ -31,6 +32,39 @@ can be installed with pip:
  Plug-in Name   | Package           | Debug Probe Type
 ----------------|-------------------|--------------------
 `pemicro`       | pyocd-pemicro     | [PE Micro](https://pemicro.com/) Cyclone and Multilink.
+
+### Raspberry Pi GPIO
+
+The `rpi-gpio` probe plugin uses the GPIO header of a Broadcom-based Raspberry Pi as an SWD probe. It supports
+Raspberry Pi models through Pi 4, including Pi Zero W and Pi Zero 2 W. Raspberry Pi 5 is not supported. The plugin
+uses `/dev/gpiomem` and must be selected explicitly; it is not included in automatic probe discovery.
+
+The default connections use BCM GPIO numbers, not header pin numbers:
+
+Signal | BCM GPIO | Header pin
+-------|----------|-----------
+SWCLK  | 11       | 23
+SWDIO  | 8        | 24
+GND    | -        | 20 (or another ground)
+
+Select the probe and target explicitly, for example:
+
+```
+pyocd gdbserver --probe rpi-gpio: --target stm32l073rz
+```
+
+An optional open-drain nRESET GPIO and alternative pin assignments can be configured in `pyocd.yaml`:
+
+```yaml
+rpi_gpio.swclk: 11
+rpi_gpio.swdio: 8
+rpi_gpio.nreset: 24
+frequency: 100000
+```
+
+Start with a low SWD frequency and short wiring. Raspberry Pi GPIO uses 3.3 V logic and is not 5 V tolerant. The
+target and Raspberry Pi must share ground, and level translation is required if the target I/O voltage is not
+compatible with the Raspberry Pi.
 
 
 
