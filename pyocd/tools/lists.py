@@ -26,6 +26,13 @@ from ..target import TARGET
 from ..target.builtin import BUILTIN_TARGETS
 from ..board.board_ids import BOARD_ID_TO_INFO
 from ..target.pack import pack_target
+from ..probe.debug_probe import DebugProbe
+
+
+class StubProbe(DebugProbe):
+    @property
+    def unique_id(self) -> str:
+        return "0"
 
 class ListGenerator(object):
     @staticmethod
@@ -151,10 +158,13 @@ class ListGenerator(object):
             if name_filter and name_filter not in name.lower():
                 continue
 
-            # A probe is unnecessary for target metadata. Passing one causes Session to create a
-            # throwaway generic Board for every target, which is both expensive and emits a
-            # misleading "Target type is cortex_m" INFO message for each entry.
+            # Build an option container without a Board, then attach a non-hardware probe because
+            # some target constructors assert that session.probe is present. Passing the probe to
+            # Session itself would create a noisy throwaway Board for every target entry.
             s = Session(None, no_config=True, target_override='cortex_m')
+            probe = StubProbe()
+            probe.session = s
+            s._probe = probe
             t = TARGET[name](s)
 
             # Filter by vendor.

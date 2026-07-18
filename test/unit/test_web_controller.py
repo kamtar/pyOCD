@@ -7,6 +7,7 @@ import pytest
 from pyocd.web.controller import WebController, WebError
 from pyocd.web import controller as web_controller
 from pyocd.core.target import Target
+from pyocd.tools import lists
 
 
 def test_upload_hides_server_path(tmp_path):
@@ -217,6 +218,29 @@ def test_profile_can_be_saved_before_specific_mcu_is_selected(tmp_path):
     saved = controller.save_profile({"interface_name": "Bench", "target_override": "cortex_m"})
     assert saved["interface_name"] == "Bench"
     controller.close()
+
+
+def test_target_metadata_session_has_probe_without_creating_board(monkeypatch):
+    seen = []
+
+    class ProbeRequiredTarget:
+        vendor = "Vendor"
+        part_families = []
+        part_number = "ProbeRequired"
+        _svd_location = None
+
+        def __init__(self, session):
+            assert session.probe is not None
+            assert session.board is None
+            seen.append(session.probe.unique_id)
+
+    monkeypatch.setattr(lists, "TARGET", {"probe_required": ProbeRequiredTarget})
+    monkeypatch.setattr(lists.pack_target.ManagedPacks, "get_installed_targets", lambda: [])
+
+    result = lists.ListGenerator.list_targets()
+
+    assert seen == ["0"]
+    assert result["targets"][0]["name"] == "probe_required"
 
 
 def test_target_actions_work_without_browser_debugger(tmp_path, monkeypatch):
