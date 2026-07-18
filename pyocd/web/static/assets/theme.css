@@ -1,0 +1,45 @@
+/* Company-green theme and compact top-bar controls. */
+:root {
+  --bg: #07120d;
+  --panel: #0e2018;
+  --panel2: #142a20;
+  --line: #254537;
+  --text: #effaf3;
+  --muted: #91aa9b;
+  --cyan: #42d58a;
+  --blue: #78d9a7;
+  --shadow: 0 24px 64px #0006;
+}
+body { background: radial-gradient(circle at 55% -20%, #17492f 0, transparent 42%), var(--bg); }
+header { background: #07130df2; }
+aside { background: #091810; }
+.card { background: linear-gradient(145deg, #10251a, #0b1912); }
+.target { background: radial-gradient(circle at 100% 0, #1d694466, transparent 48%), linear-gradient(145deg, #132d20, #0b1912); }
+.port, .form input, .form select, .formrow input, .formrow select, .inline input, .hex, .terminal pre { background: #06120c; }
+.topmcu { display: flex; flex-direction: column; gap: 3px; }
+.topmcu small { color: var(--muted); font-size: 9px; letter-spacing: .1em; }
+.topmcu select { min-width: 150px; max-width: 210px; border: 0; padding: 0; background: transparent; color: var(--text); font-weight: 700; }
+.topmcu option { background: #10251a; }
+.topelf { padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; white-space: nowrap; }
+.topelf:hover { border-color: var(--cyan); }
+.topelf input { display: none; }
+.topelf span { color: var(--cyan); font-size: 12px; font-weight: 700; }
+.topmetric { display: flex; flex-direction: column; gap: 3px; padding: 2px 7px; border-color: transparent; background: transparent; }
+.topmetric small { color: var(--muted); font-size: 9px; letter-spacing: .1em; }
+.topmetric b { color: var(--text); font-size: 13px; }
+.topmetric:hover { border-color: var(--cyan); transform: none; }
+.dumpgrid { display: grid; grid-template-columns: 1.1fr 1fr 1fr auto auto; gap: 10px; align-items: end; }
+.dumpgrid label { display: flex; flex-direction: column; gap: 7px; color: #b8d0c1; font-size: 12px; }
+.dumpgrid input, .dumpgrid select { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: #06120c; color: var(--text); }
+.optional-group { border: 1px solid var(--line); border-radius: 10px; background: #091810; }
+.optional-group summary { padding: 12px 14px; color: var(--text); font-weight: 700; cursor: pointer; user-select: none; }
+.optional-group summary::marker { color: var(--cyan); }
+.optional-content { display: flex; flex-direction: column; gap: 14px; padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+.optional-content > label { margin-top: 10px; }
+.cols.setup:has(#gpioCard.hidden) { grid-template-columns: 1fr; }
+@media (max-width: 1050px) {
+  .topelf { display: none; }
+  .topmcu select { max-width: 140px; }
+  .statusbar { gap: 14px; }
+  .dumpgrid { grid-template-columns: 1fr 1fr; }
+}

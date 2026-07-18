@@ -44,6 +44,7 @@ from .subcommands.reset_cmd import ResetSubcommand
 from .subcommands.server_cmd import ServerSubcommand
 from .subcommands.rtt_cmd import RTTSubcommand
 from .subcommands.run_cmd import RunSubcommand
+from .subcommands.web_cmd import WebSubcommand
 
 ## @brief Logger for this module.
 LOG = logging.getLogger("pyocd.tool")
@@ -67,6 +68,7 @@ class PyOCDTool(SubcommandBase):
         ServerSubcommand,
         RTTSubcommand,
         RunSubcommand,
+        WebSubcommand,
         ]
 
     ## @brief Logging level names.
