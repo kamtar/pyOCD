@@ -24,10 +24,29 @@ aside { background: #091810; }
 .topelf:hover { border-color: var(--cyan); }
 .topelf input { display: none; }
 .topelf span { color: var(--cyan); font-size: 12px; font-weight: 700; }
-.topmetric { display: flex; flex-direction: column; gap: 3px; padding: 2px 7px; border-color: transparent; background: transparent; }
+.topmetric { display: flex; flex-direction: column; gap: 3px; padding: 5px 10px; border-color: var(--line); background: var(--panel2); box-shadow: inset 0 0 0 1px #ffffff08; }
 .topmetric small { color: var(--muted); font-size: 9px; letter-spacing: .1em; }
 .topmetric b { color: var(--text); font-size: 13px; }
 .topmetric:hover { border-color: var(--cyan); transform: none; }
+.topmetric.active { border-color: var(--cyan); background: #17412d; }
+.top-separator { width: 1px; height: 30px; margin: 0 2px; background: var(--line); }
+.resetmetric { border-color: #765e28; background: #2c2618; }
+.resetmetric small, .resetmetric b { color: var(--amber); }
+.resetmetric:hover { border-color: var(--amber); }
+#statePill { border: 1px solid var(--line); cursor: pointer; white-space: nowrap; }
+#statePill:hover { border-color: var(--cyan); transform: none; }
+#toast { left: 50%; right: auto; top: 92px; bottom: auto; width: min(560px, calc(100vw - 32px)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+.toast { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 12px; margin: 0; padding: 14px; border-color: #39735a; border-radius: 14px; background: #10291df5; box-shadow: 0 18px 55px #000a, inset 0 0 0 1px #ffffff0a; backdrop-filter: blur(16px); pointer-events: auto; animation: toast-in .22s ease-out; }
+.toast.error { border-color: #ba5060; background: #351b23f7; box-shadow: 0 18px 55px #000a, inset 4px 0 #ff6577; }
+.toast-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: #062016; background: var(--cyan); font-weight: 900; }
+.toast.error .toast-icon { color: white; background: var(--red); }
+.toast-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.toast-copy b { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); }
+.toast.error .toast-copy b { color: #ff9daa; }
+.toast-copy small { color: var(--text); font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.toast-close { width: 32px; height: 32px; padding: 0; border-color: transparent; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; }
+.toast-close:hover { color: var(--text); border-color: var(--line); transform: none; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-12px) scale(.98); } }
 .dumpgrid { display: grid; grid-template-columns: 1.1fr 1fr 1fr auto auto; gap: 10px; align-items: end; }
 .dumpgrid label { display: flex; flex-direction: column; gap: 7px; color: #b8d0c1; font-size: 12px; }
 .dumpgrid input, .dumpgrid select { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: #06120c; color: var(--text); }
@@ -38,7 +57,7 @@ aside { background: #091810; }
 .optional-content > label { margin-top: 10px; }
 .cols.setup:has(#gpioCard.hidden) { grid-template-columns: 1fr; }
 @media (max-width: 1050px) {
-  .topelf { display: none; }
+  header > .topelf { display: none; }
   .topmcu select { max-width: 140px; }
   .statusbar { gap: 14px; }
   .dumpgrid { grid-template-columns: 1fr 1fr; }

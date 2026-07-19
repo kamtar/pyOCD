@@ -1,9 +1,10 @@
 {
-  "probe": "TWVGEOMNXW4BV",
+  "probe": null,
   "target_override": "lpc4078fbd144",
   "frequency": 1000000,
   "connect_mode": "halt",
   "dap_protocol": "default",
+  "reset_method": "hardware",
   "gpio": {
     "swclk": 20,
     "swdio": 21,

@@ -31,6 +31,7 @@ from ..core.exceptions import TransferError
 from ..core.helpers import ConnectHelper
 from ..core.options import OPTIONS_INFO
 from ..core.session import Session
+from ..core.target import Target
 from ..flash.eraser import FlashEraser
 from ..flash.file_programmer import FileProgrammer
 from ..gdbserver import GDBServer
@@ -504,14 +505,8 @@ class WebController:
             session: Optional[Session] = None
             try:
                 selector = profile.get("probe") or None
-                if selector is None:
-                    raise WebError(
-                        "probe_required",
-                        "Select a debug probe before connecting",
-                        400)
-                else:
-                    probe = ConnectHelper.choose_probe(
-                        blocking=False, return_first=True, unique_id=selector)
+                probe = ConnectHelper.choose_probe(
+                    blocking=False, return_first=True, unique_id=selector)
                 if probe is None:
                     raise WebError(
                         "probe_not_found",
@@ -570,12 +565,10 @@ class WebController:
             if self._session and self._session.is_open:
                 raise WebError("already_connected", "Disconnect before pulsing the probe reset pin", 409)
             selector = profile.get("probe") or None
-            if selector is None:
-                raise WebError("probe_required", "Select a debug probe first")
             probe = ConnectHelper.choose_probe(
                 blocking=False, return_first=True, unique_id=selector)
             if probe is None:
-                raise WebError("probe_not_found", "The selected debug probe is not available", 404)
+                raise WebError("probe_not_found", "No debug probe is available", 404)
 
             options: Dict[str, Any] = {}
             if profile.get("frequency") is not None:
@@ -646,7 +639,8 @@ class WebController:
                     "halt": "-exec-interrupt",
                     "resume": "-exec-continue",
                     "step": "-exec-next",
-                    "reset": f"-interpreter-exec console {quote_mi('monitor reset')}",
+                    "reset": f"-interpreter-exec console {quote_mi('monitor reset core')}",
+                    "reset-hardware": f"-interpreter-exec console {quote_mi('monitor reset hardware')}",
                     "reset-halt": f"-interpreter-exec console {quote_mi('monitor reset halt')}",
                 }
                 if action not in commands:
@@ -654,10 +648,12 @@ class WebController:
                 try:
                     if action == "halt":
                         self._debugger_stopped.clear()
-                    elif action in ("resume", "step"):
+                    elif action in ("resume", "step", "reset", "reset-hardware"):
                         self._debugger_state = "running"
                         self._debugger_stopped.clear()
                     self._debugger.command(commands[action])
+                    if action in ("reset", "reset-hardware"):
+                        self._debugger.command("-exec-continue")
                     if action == "halt":
                         # ^done acknowledges the interrupt request; *stopped is
                         # asynchronous and can arrive just afterwards. Wait for
@@ -678,8 +674,40 @@ class WebController:
                 self._record_activity_locked(action, f"Target {action} requested through GDB")
                 return self.snapshot()
             target = self._require_exclusive().target
-            actions: Dict[str, Callable[[], None]] = {"halt": target.halt, "resume": target.resume,
-                                                      "step": target.step, "reset": target.reset, "reset-halt": target.reset_and_halt}
+
+            def reset_hardware() -> None:
+                try:
+                    target.reset(Target.ResetType.HARDWARE)
+                except TransferError as exc:
+                    # The reset itself can succeed while the first post-reset SWD
+                    # access receives no ACK. Recover the existing DP in place;
+                    # never close or discard the web session because of a reset.
+                    logging.getLogger(__name__).warning(
+                        "Recovering debug link after hardware reset: %s", exc)
+                    dp = getattr(target, "dp", None)
+                    if dp is None:
+                        raise
+                    last_error: Optional[TransferError] = exc
+                    for _ in range(3):
+                        try:
+                            dp.post_reset_recovery()
+                            return
+                        except TransferError as recovery_error:
+                            last_error = recovery_error
+                            time.sleep(0.1)
+                    raise last_error
+
+            actions: Dict[str, Callable[[], None]] = {
+                "halt": target.halt,
+                "resume": target.resume,
+                "step": target.step,
+                # A connected reset must preserve the live debug link. A core-only
+                # reset avoids the ResetSystem sequence, which can momentarily remove
+                # the DAP and leave this long-lived web session without acknowledgements.
+                "reset": lambda: target.reset(Target.ResetType.CORE),
+                "reset-hardware": reset_hardware,
+                "reset-halt": target.reset_and_halt,
+            }
             if action not in actions:
                 raise WebError("bad_action", "Unknown target action")
             actions[action]()
@@ -868,7 +896,7 @@ class WebController:
                     job.progress = total
                     job.message = f"Programming {artifact['name']} · {total * 100:.0f}%"
                 # Only the first image may use chip erase. Following images use sector erase
-                # so a bootloader programmed first cannot be erased by the application image.
+                # so they cannot erase the image that was already programmed.
                 erase_mode = options.get("erase", "sector") if index == 0 else "sector"
                 programmer = FileProgrammer(
                     session, progress=progress, chip_erase=erase_mode,

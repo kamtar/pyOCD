@@ -331,22 +331,27 @@ def test_target_actions_work_without_browser_debugger(tmp_path, monkeypatch):
     calls = []
     target = SimpleNamespace(
         halt=lambda: calls.append("halt"), resume=lambda: calls.append("resume"),
-        reset=lambda: calls.append("reset"), reset_and_halt=lambda: calls.append("reset-halt"),
+        reset=lambda reset_type=None: calls.append(("reset", reset_type)),
+        reset_and_halt=lambda: calls.append("reset-halt"),
         step=lambda: calls.append("step"))
     monkeypatch.setattr(controller, "_require_exclusive", lambda: SimpleNamespace(target=target))
     monkeypatch.setattr(controller, "snapshot", lambda: {"connected": True})
 
-    for action in ("halt", "reset-halt", "resume"):
+    for action in ("halt", "reset-halt", "resume", "reset", "reset-hardware"):
         controller.target_action(action)
 
-    assert calls == ["halt", "reset-halt", "resume"]
+    assert calls == [
+        "halt", "reset-halt", "resume",
+        ("reset", Target.ResetType.CORE),
+        ("reset", Target.ResetType.HARDWARE),
+    ]
     controller.close()
 
 
 def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path))
-    first = controller.upload("bootloader.bin", b"boot")
-    second = controller.upload("application.bin", b"app")
+    first = controller.upload("application.bin", b"app")
+    second = controller.upload("bootloader.bin", b"boot")
     calls = []
 
     class Programmer:
@@ -366,14 +371,16 @@ def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeyp
     session = SimpleNamespace(is_open=True, target=target, gdbservers={}, close=lambda: None)
     controller._session = session
     controller.program_images([
-        {"artifact_id": first["id"], "base_address": "0x08000000"},
-        {"artifact_id": second["id"], "base_address": "0x08008000"},
+        {"artifact_id": first["id"], "base_address": "0x08008000"},
+        {"artifact_id": second["id"], "base_address": "0x08000000"},
     ], {"erase": "chip", "post_action": "reset"})
 
     controller.close()
 
-    assert calls[0][1:] == ("chip", 0x08000000)
-    assert calls[1][1:] == ("sector", 0x08008000)
+    assert calls == [
+        (next(tmp_path.glob("*-application.bin")).name, "chip", 0x08008000),
+        (next(tmp_path.glob("*-bootloader.bin")).name, "sector", 0x08000000),
+    ]
     assert target_calls == ["reset-halt", "reset"]
 
 
@@ -434,12 +441,18 @@ def test_raspberry_pi_gpio_is_hidden_on_windows(tmp_path, monkeypatch):
     controller.close()
 
 
-def test_connect_requires_explicit_probe_selection(tmp_path, monkeypatch):
+def test_connect_defaults_to_first_available_probe(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path))
+    selected = []
+
+    monkeypatch.setattr(
+        "pyocd.web.controller.ConnectHelper.choose_probe",
+        lambda **kwargs: selected.append(kwargs) or None)
     with pytest.raises(WebError) as error:
         controller.connect({"target_override": "stm32f103rc"})
 
-    assert error.value.code == "probe_required"
+    assert error.value.code == "probe_not_found"
+    assert selected == [{"blocking": False, "return_first": True, "unique_id": None}]
     controller.close()
 
 
@@ -476,6 +489,21 @@ def test_probe_reset_opens_adapter_without_initialising_target(tmp_path, monkeyp
     assert ("open", False) in calls
     assert "reset" in calls
     assert calls[-1] == "close"
+    controller.close()
+
+
+def test_probe_reset_defaults_to_first_available_probe(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
+    selected = []
+    monkeypatch.setattr(
+        "pyocd.web.controller.ConnectHelper.choose_probe",
+        lambda **kwargs: selected.append(kwargs) or None)
+
+    with pytest.raises(WebError) as error:
+        controller.pulse_probe_reset({})
+
+    assert error.value.code == "probe_not_found"
+    assert selected == [{"blocking": False, "return_first": True, "unique_id": None}]
     controller.close()
 
 
@@ -674,4 +702,51 @@ def test_gdb_async_stop_updates_browser_state(tmp_path):
 
     assert controller._debugger_state == "stopped"
     assert controller._debugger_stopped.is_set()
+    controller.close()
+
+
+def test_browser_reset_continues_target_after_reset(tmp_path):
+    controller = WebController(str(tmp_path))
+    commands = []
+
+    class FakeDebugger:
+        is_alive = True
+        executable = "gdb"
+
+        def command(self, command, timeout=10.0):
+            commands.append(command)
+            return {}
+
+    controller._debugger = FakeDebugger()
+    controller._debugger_state = "stopped"
+
+    controller.target_action("reset")
+
+    assert commands == [
+        "-interpreter-exec console \"monitor reset core\"",
+        "-exec-continue",
+    ]
+    assert controller._debugger_state == "running"
+    controller._debugger = None
+    controller.close()
+
+
+def test_hardware_reset_recovers_link_without_disconnecting(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    recoveries = []
+    dp = SimpleNamespace(post_reset_recovery=lambda: recoveries.append(True))
+    target = SimpleNamespace(
+        dp=dp,
+        reset=lambda reset_type: (_ for _ in ()).throw(TransferError("No ACK")),
+    )
+    session = SimpleNamespace(is_open=True, target=target)
+    controller._session = session
+    monkeypatch.setattr(controller, "snapshot", lambda: {"connected": True})
+
+    result = controller.target_action("reset-hardware")
+
+    assert result == {"connected": True}
+    assert recoveries == [True]
+    assert controller._session is session
+    controller._session = None
     controller.close()
