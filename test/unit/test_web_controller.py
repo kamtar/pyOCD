@@ -20,6 +20,18 @@ def test_upload_hides_server_path(tmp_path):
     controller.close()
 
 
+def test_upload_with_same_name_overwrites_existing_artifact(tmp_path):
+    controller = WebController(str(tmp_path))
+    first = controller.upload("firmware.bin", b"old")
+    second = controller.upload("firmware.bin", b"new content")
+
+    artifacts = controller.snapshot()["artifacts"]
+    assert second["id"] == first["id"]
+    assert artifacts == [second]
+    assert list(Path(tmp_path).glob("*-firmware.bin"))[0].read_bytes() == b"new content"
+    controller.close()
+
+
 def test_memory_read_limit_is_checked_before_session(tmp_path):
     controller = WebController(str(tmp_path))
     with pytest.raises(WebError, match="Length must be") as error:

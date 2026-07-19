@@ -737,17 +737,21 @@ class WebController:
             return bytes(data)
 
     def upload(self, name: str, content: bytes) -> Dict[str, Any]:
-        artifact_id = uuid.uuid4().hex
         safe_name = Path(name).name or "firmware.bin"
-        path = self._artifact_dir / f"{artifact_id}-{safe_name}"
-        path.write_bytes(content)
-        item = {
-            "id": artifact_id,
-            "name": safe_name,
-            "size": len(content),
-            "uploaded_at": time.time()}
-        self._artifacts[artifact_id] = {**item, "path": str(path)}
-        return item
+        with self._lock:
+            existing = next((artifact for artifact in self._artifacts.values()
+                             if artifact["name"] == safe_name), None)
+            artifact_id = existing["id"] if existing else uuid.uuid4().hex
+            path = (Path(existing["path"]) if existing else
+                    self._artifact_dir / f"{artifact_id}-{safe_name}")
+            path.write_bytes(content)
+            item = {
+                "id": artifact_id,
+                "name": safe_name,
+                "size": len(content),
+                "uploaded_at": time.time()}
+            self._artifacts[artifact_id] = {**item, "path": str(path)}
+            return item
 
     def attach_elf(self, artifact_id: str) -> Dict[str, Any]:
         with self._lock:

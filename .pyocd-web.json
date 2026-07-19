@@ -1,6 +1,6 @@
 {
   "probe": "TWVGEOMNXW4BV",
-  "target_override": "lpc4088",
+  "target_override": "lpc4078fbd144",
   "frequency": 1000000,
   "connect_mode": "halt",
   "dap_protocol": "default",
@@ -10,5 +10,5 @@
     "restore_pins": true,
     "nreset": 16
   },
-  "interface_name": "local"
+  "interface_name": "pyOCD"
 }
