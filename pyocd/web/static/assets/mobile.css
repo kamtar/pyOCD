@@ -1,0 +1,154 @@
+/* Phone layout. All rules are isolated so the desktop workspace is unchanged. */
+@media (max-width: 600px) {
+  :root { font-size: 15px; }
+  html { scroll-padding-top: 138px; }
+  body { padding-bottom: calc(74px + env(safe-area-inset-bottom)); overflow-x: hidden; }
+
+  header {
+    height: auto;
+    min-height: 150px;
+    padding: max(10px, env(safe-area-inset-top)) 12px 10px;
+    gap: 10px 12px;
+    align-items: center;
+  }
+  .brand { min-width: 0; gap: 8px; }
+  .brand i { width: 32px; height: 32px; border-radius: 9px; font-size: 20px; }
+  .brand b { font-size: 18px; }
+  .brand small { display: none; }
+  #statePill { padding: 7px 10px; }
+  header > .topelf, #connectTop { display: none !important; }
+
+  .statusbar {
+    order: 3;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .statusbar > #statePill { grid-column: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .statusbar .topmcu { grid-column: 2 / -1; min-width: 0; }
+  .topmcu small { display: block; }
+  .topmcu select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #0b1d14;
+    text-overflow: ellipsis;
+  }
+  .topmetric { min-width: 0; height: 48px; padding: 5px 8px; }
+  .topmetric b { font-size: 12px; }
+  .top-separator, .statusbar > label { display: none; }
+
+  .shell { display: block; min-height: auto; }
+  aside {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 30;
+    width: 100%;
+    height: calc(66px + env(safe-area-inset-bottom));
+    padding: 5px 6px env(safe-area-inset-bottom);
+    border: 0;
+    border-top: 1px solid var(--line);
+    background: #08150fee;
+    backdrop-filter: blur(18px);
+  }
+  nav {
+    height: 60px;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(76px, 1fr);
+    justify-content: start;
+    gap: 3px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  nav::-webkit-scrollbar { display: none; }
+  nav button {
+    min-width: 0;
+    padding: 7px 5px 6px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    text-align: center;
+    font-size: 0;
+    white-space: nowrap;
+    border-radius: 10px;
+  }
+  nav button::first-letter { font-size: 18px; }
+  nav button::after { font-size: 10px; line-height: 1; color: inherit; }
+  nav button[data-tab="overview"]::after { content: "Overview"; }
+  nav button[data-tab="connection"]::after { content: "Connect"; }
+  nav button[data-tab="program"]::after { content: "Program"; }
+  nav button[data-tab="debug"]::after { content: "Debug"; }
+  nav button[data-tab="console"]::after { content: "Console"; }
+  nav button[data-tab="logs"]::after { content: "Logs"; }
+  nav button[data-tab="system"]::after { content: "System"; }
+  nav button.active { box-shadow: inset 0 -3px var(--cyan); }
+
+  main { padding: 22px 12px 0; overflow: hidden; }
+  .tab, .tab.active { scroll-margin-top: 140px; padding-bottom: 30px; margin-bottom: 32px; }
+  .heading { gap: 14px; margin-bottom: 18px; }
+  .heading h1 { font-size: 27px; line-height: 1.08; }
+  .heading p { line-height: 1.45; }
+  .actions { width: calc(100vw - 24px); padding-bottom: 3px; overflow-x: auto; scrollbar-width: none; }
+  .actions::-webkit-scrollbar { display: none; }
+  .actions button { flex: 0 0 auto; }
+
+  .hero, .cols, .cols.setup, .debugtop, .debugbottom { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .card { min-width: 0; padding: 17px; border-radius: 13px; box-shadow: 0 14px 38px #0004; }
+  .card h2 { margin-top: 22px; font-size: 23px; overflow-wrap: anywhere; }
+  .specs { grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 20px; }
+  .specs label { min-width: 0; padding: 10px 8px; }
+  .formrow, .dumpgrid { grid-template-columns: minmax(0, 1fr); }
+  .formactions { display: grid; grid-template-columns: 1fr 1fr; }
+  .formactions button { min-width: 0; padding-inline: 9px; }
+  .formactions button:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .range { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .range output { min-width: 0; }
+  .pins { padding: 14px 18px; }
+  .dangerzone { gap: 12px; align-items: flex-end; }
+  .dangerzone span { min-width: 0; }
+
+  .inline { flex-wrap: wrap; }
+  .inline input, .inline input:nth-child(2) { flex: 1 1 120px; max-width: none; }
+  .inline button { flex: 1 1 auto; }
+  .registers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .variable-head, .variable-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .frame-row { grid-template-columns: 30px minmax(0, 1fr); }
+  .frame-row > small { grid-column: 2; }
+  .hex, .terminal pre { max-width: 100%; font-size: 11px; }
+  .terminal pre { min-height: 330px; }
+  .terminal form { padding: 9px; }
+  .terminal form button { padding-inline: 10px; }
+
+  #toast {
+    position: fixed;
+    top: calc(max(10px, env(safe-area-inset-top)) + 154px);
+    left: 10px;
+    right: 10px;
+    bottom: auto;
+    width: auto;
+    max-height: calc(100dvh - 220px - env(safe-area-inset-bottom));
+    transform: none;
+    overflow-y: auto;
+  }
+  .toast { grid-template-columns: 30px minmax(0, 1fr) 30px; gap: 9px; padding: 11px; }
+  .toast-icon, .toast-close { width: 30px; height: 30px; }
+  .toast-copy small { font-size: 13px; }
+
+  dialog { width: calc(100vw - 24px); max-width: none; padding: 20px; }
+  dialog div { display: grid; grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 380px) {
+  #topGdb { display: none; }
+  .formactions { grid-template-columns: 1fr; }
+  .formactions button:last-child:nth-child(odd) { grid-column: auto; }
+}
