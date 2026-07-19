@@ -332,7 +332,7 @@ def test_target_actions_work_without_browser_debugger(tmp_path, monkeypatch):
     target = SimpleNamespace(
         halt=lambda: calls.append("halt"), resume=lambda: calls.append("resume"),
         reset=lambda reset_type=None: calls.append(("reset", reset_type)),
-        reset_and_halt=lambda: calls.append("reset-halt"),
+        reset_and_halt=lambda reset_type=None: calls.append("reset-halt"),
         step=lambda: calls.append("step"))
     monkeypatch.setattr(controller, "_require_exclusive", lambda: SimpleNamespace(target=target))
     monkeypatch.setattr(controller, "snapshot", lambda: {"connected": True})
@@ -366,8 +366,8 @@ def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeyp
     monkeypatch.setattr("pyocd.web.controller.FileProgrammer", Programmer)
     target_calls = []
     target = SimpleNamespace(
-        reset=lambda: target_calls.append("reset"),
-        reset_and_halt=lambda: target_calls.append("reset-halt"))
+        reset=lambda reset_type=None: target_calls.append(("reset", reset_type)),
+        reset_and_halt=lambda reset_type=None: target_calls.append(("reset-halt", reset_type)))
     session = SimpleNamespace(is_open=True, target=target, gdbservers={}, close=lambda: None)
     controller._session = session
     controller.program_images([
@@ -381,7 +381,10 @@ def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeyp
         (next(tmp_path.glob("*-application.bin")).name, "chip", 0x08008000),
         (next(tmp_path.glob("*-bootloader.bin")).name, "sector", 0x08000000),
     ]
-    assert target_calls == ["reset-halt", "reset"]
+    assert target_calls == [
+        ("reset-halt", Target.ResetType.HARDWARE),
+        ("reset", Target.ResetType.HARDWARE),
+    ]
 
 
 def test_post_reset_transfer_error_does_not_fail_completed_program(tmp_path, monkeypatch):
@@ -404,8 +407,8 @@ def test_post_reset_transfer_error_does_not_fail_completed_program(tmp_path, mon
             assert (name, value) == ("resume_on_disconnect", False)
 
     target = SimpleNamespace(
-        reset_and_halt=lambda: None,
-        reset=lambda: (_ for _ in ()).throw(TransferError("No ACK")))
+        reset_and_halt=lambda reset_type=None: None,
+        reset=lambda reset_type=None: (_ for _ in ()).throw(TransferError("No ACK")))
     session = SimpleNamespace(
         is_open=True, target=target, options=Options(),
         context_state=SimpleNamespace(suppress_disconnect_error=False),

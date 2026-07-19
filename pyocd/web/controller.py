@@ -524,6 +524,10 @@ class WebController:
                 for key in ("target_override", "frequency", "connect_mode", "dap_protocol"):
                     if profile.get(key) is not None:
                         options[key] = profile[key]
+                reset_method = profile.get("reset_method", "hardware")
+                if reset_method not in ("hardware", "core"):
+                    raise WebError("invalid_reset_method", "Reset method must be hardware or core")
+                options["reset_type"] = reset_method
                 gpio = profile.get("gpio") or {}
                 if not isinstance(gpio, dict):
                     raise WebError("invalid_gpio", "GPIO settings must be a JSON object")
@@ -642,6 +646,8 @@ class WebController:
                     "reset": f"-interpreter-exec console {quote_mi('monitor reset core')}",
                     "reset-hardware": f"-interpreter-exec console {quote_mi('monitor reset hardware')}",
                     "reset-halt": f"-interpreter-exec console {quote_mi('monitor reset halt')}",
+                    "reset-halt-core": f"-interpreter-exec console {quote_mi('monitor reset halt core')}",
+                    "reset-halt-hardware": f"-interpreter-exec console {quote_mi('monitor reset halt hardware')}",
                 }
                 if action not in commands:
                     raise WebError("bad_action", "Unknown target action")
@@ -666,7 +672,7 @@ class WebController:
                             self._debugger.command("-stack-info-frame", timeout=3.0)
                             self._debugger_state = "stopped"
                             self._debugger_stopped.set()
-                    elif action == "reset-halt":
+                    elif action in ("reset-halt", "reset-halt-core", "reset-halt-hardware"):
                         self._debugger_state = "stopped"
                         self._debugger_stopped.set()
                 except GdbMiError as exc:
@@ -697,6 +703,18 @@ class WebController:
                             time.sleep(0.1)
                     raise last_error
 
+            def reset_and_halt(reset_type: Target.ResetType) -> None:
+                try:
+                    target.reset_and_halt(reset_type)
+                except TransferError:
+                    if reset_type is not Target.ResetType.HARDWARE:
+                        raise
+                    dp = getattr(target, "dp", None)
+                    if dp is None:
+                        raise
+                    dp.post_reset_recovery()
+                    target.halt()
+
             actions: Dict[str, Callable[[], None]] = {
                 "halt": target.halt,
                 "resume": target.resume,
@@ -707,6 +725,8 @@ class WebController:
                 "reset": lambda: target.reset(Target.ResetType.CORE),
                 "reset-hardware": reset_hardware,
                 "reset-halt": target.reset_and_halt,
+                "reset-halt-core": lambda: reset_and_halt(Target.ResetType.CORE),
+                "reset-halt-hardware": lambda: reset_and_halt(Target.ResetType.HARDWARE),
             }
             if action not in actions:
                 raise WebError("bad_action", "Unknown target action")
@@ -881,10 +901,13 @@ class WebController:
 
         def work(job: Job) -> None:
             session = self._require_session()
+            reset_type = (Target.ResetType.HARDWARE
+                          if options.get("reset_method", "hardware") == "hardware"
+                          else Target.ResetType.CORE)
             # Match the load command's default pre-program reset. A long-lived web
             # session may have left the core running or peripherals in a state that
             # prevents the RAM flash algorithm from starting reliably.
-            session.target.reset_and_halt()
+            session.target.reset_and_halt(reset_type)
             count = len(artifacts)
             for index, (artifact, image) in enumerate(artifacts):
                 with self._lock:
@@ -915,11 +938,11 @@ class WebController:
             post = options.get("post_action", "reset")
             try:
                 if post == "reset":
-                    session.target.reset()
+                    session.target.reset(reset_type)
                 elif post == "halt":
-                    session.target.reset_and_halt()
+                    session.target.reset_and_halt(reset_type)
                 elif post == "run":
-                    session.target.reset()
+                    session.target.reset(reset_type)
                     session.target.resume()
             except TransferError as exc:
                 # Match the load command: reset can momentarily remove the DAP even
