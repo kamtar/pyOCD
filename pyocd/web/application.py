@@ -130,6 +130,18 @@ def create_application(
     async def targets(request):
         return web.json_response(await asyncio.to_thread(ctrl.targets, request.query.get("q")))
 
+    async def target_pack_info(request):
+        return web.json_response(await asyncio.to_thread(
+            ctrl.target_pack_info, request.match_info["target"]))
+
+    async def run_pack_sequence(request):
+        data = await body(request)
+        return web.json_response(await asyncio.to_thread(
+            ctrl.run_pack_sequence, str(data.get("name", "")), data.get("pname")))
+
+    async def unlock_target(request):
+        return web.json_response(await asyncio.to_thread(ctrl.unlock_target))
+
     async def pack_search(request):
         return web.json_response(await asyncio.to_thread(
             ctrl.pack_search, request.query.get("q", ""), int(request.query.get("limit", 100))))
@@ -301,12 +313,15 @@ def create_application(
         web.get("/api/v1/update/check", update_check),
         web.get("/api/v1/config", configuration), web.put("/api/v1/config", configuration),
         web.get("/api/v1/probes", probes), web.get("/api/v1/targets", targets),
+        web.get("/api/v1/targets/{target}/pack", target_pack_info),
+        web.post("/api/v1/pack/sequences/run", run_pack_sequence),
         web.get("/api/v1/packs/devices", pack_search),
         web.post("/api/v1/packs/index", pack_update),
         web.post("/api/v1/packs/install", pack_install),
         web.post("/api/v1/session/connect",
                  connect), web.post("/api/v1/session/disconnect", disconnect),
         web.post("/api/v1/probe/reset", probe_reset),
+        web.post("/api/v1/target/unlock", unlock_target),
         web.post("/api/v1/target/{action}", target_action), web.get(
             "/api/v1/cores/{core}/registers", registers),
         web.post("/api/v1/memory/read",

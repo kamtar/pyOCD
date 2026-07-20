@@ -1,15 +1,22 @@
 {
-  "probe": null,
-  "target_override": "lpc4078fbd144",
+  "probe": "TWVGEOMNXW4BV",
+  "target_override": null,
   "frequency": 1000000,
   "connect_mode": "halt",
   "dap_protocol": "default",
   "reset_method": "hardware",
-  "gpio": {
-    "swclk": 20,
-    "swdio": 21,
-    "restore_pins": true,
-    "nreset": 16
-  },
-  "interface_name": "pyOCD"
+  "gpio": {},
+  "interface_name": "pyOCD",
+  "options": {
+    "auto_unlock": true,
+    "resume_on_disconnect": true,
+    "dap_swj_enable": true,
+    "dap_swj_use_dormant": false,
+    "reset.hold_time": 0.1,
+    "reset.post_delay": 0.1,
+    "pack.debug_sequences.enable": true,
+    "cmsis_dap.prefer_v1": false,
+    "cmsis_dap.deferred_transfers": true,
+    "cmsis_dap.limit_packets": false
+  }
 }

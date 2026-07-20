@@ -37,6 +37,7 @@ from ..flash.file_programmer import FileProgrammer
 from ..gdbserver import GDBServer
 from ..tools.lists import ListGenerator
 from ..target.pack import pack_target
+from ..target import TARGET
 from .gdb_mi import GdbMiClient, GdbMiError, MiRecord, quote_mi
 
 try:
@@ -125,7 +126,8 @@ class WebController:
         "cmsis_dap.prefer_v1", "connect_mode", "dap_protocol", "dap_swj_enable",
         "dap_swj_use_dormant", "frequency", "jlink.power", "reset.hold_time",
         "reset.post_delay", "reset_type", "resume_on_disconnect",
-        "stlink.v3_prescaler",
+        "stlink.v3_prescaler", "pack.debug_sequences.enable",
+        "pack.debug_sequences.disabled_sequences",
     }
 
     def __init__(
@@ -441,10 +443,107 @@ class WebController:
 
     def targets(self, query: Optional[str] = None) -> Dict[str, Any]:
         result = ListGenerator.list_targets(name_filter=query)
-        result["targets"] = [
-            target for target in result.get("targets", [])
-            if target.get("name") != "cortex_m"]
+        unique_targets: Dict[str, Dict[str, Any]] = {}
+        for target in result.get("targets", []):
+            name = target.get("name")
+            if name and name != "cortex_m":
+                # Managed Pack targets can appear once from TARGET and once from
+                # the Pack cache after metadata inspection has populated them.
+                unique_targets.setdefault(name, target)
+        result["targets"] = list(unique_targets.values())
         return result
+
+    def target_pack_info(self, target_name: str) -> Dict[str, Any]:
+        """Return CMSIS-Pack debug-sequence metadata without opening a probe."""
+        # Managed Pack devices are included in ListGenerator.list_targets() without
+        # being inserted into TARGET. Populate only the selected device so metadata
+        # inspection never depends on a prior (possibly failed) connection attempt.
+        target_class = TARGET.get(target_name.lower())
+        if target_class is None:
+            pack_target.ManagedPacks.populate_target(target_name)
+            target_class = TARGET.get(target_name.lower())
+        recovery = self._target_recovery_info(target_class)
+        pack_device = getattr(target_class, "_pack_device", None) if target_class else None
+        if pack_device is None:
+            return {"target": target_name, "source": "builtin", "sequences": [],
+                    "processors": [], "pack": None, "recovery": recovery}
+
+        sequences = sorted(({
+            "name": sequence.name,
+            "pname": sequence.pname,
+            "info": sequence.info,
+            "enabled": sequence.is_enabled,
+        } for sequence in pack_device.sequences),
+            key=lambda item: (item["name"].lower(), item["pname"] or ""))
+        pdsc = pack_device.pack_description
+        return {
+            "target": target_name,
+            "source": "pack",
+            "pack": {"name": pdsc.pack_name, "path": pack_device.pack_path},
+            "processors": sorted(pack_device.processors_map),
+            "sequences": sequences,
+            "recovery": recovery,
+        }
+
+    @staticmethod
+    def _target_recovery_info(target_class: Optional[type]) -> Dict[str, Any]:
+        if target_class is None:
+            return {"available": False, "implementation": "Unavailable", "automatic": False}
+        handler = next((base for base in target_class.__mro__ if "mass_erase" in base.__dict__), None)
+        automatic_handler = next((base for base in target_class.__mro__
+                                  if "check_flash_security" in base.__dict__), None)
+        if handler is None:
+            return {"available": False, "implementation": "Unavailable", "automatic": False}
+        labels = {
+            "Kinetis": "Kinetis MDM-AP mass erase",
+            "NRF52": "Nordic CTRL-AP mass erase",
+            "NRF91": "Nordic CTRL-AP mass erase",
+            "NRF54L": "Nordic CTRL-AP mass erase",
+            "LPC5500": "LPC debugger-mailbox recovery",
+            "SoCTarget": "Generic chip erase",
+        }
+        return {
+            "available": True,
+            "implementation": labels.get(handler.__name__, f"{handler.__name__} mass erase"),
+            "handler": f"{handler.__module__}.{handler.__name__}",
+            "automatic": automatic_handler is not None,
+        }
+
+    def unlock_target(self) -> Dict[str, Any]:
+        """Mass erase the connected target using its recovery implementation."""
+        with self._lock:
+            session = self._require_exclusive()
+            result = session.target.mass_erase()
+            if result is False:
+                raise WebError("unlock_failed", "Target mass erase and unlock failed", 409)
+            try:
+                self._target_locked = session.target.is_locked()
+            except Exception:
+                self._target_locked = None
+            self._record_activity_locked("unlock", "Target mass erased and unlock requested")
+            return self.snapshot()
+
+    def run_pack_sequence(self, name: str, pname: Optional[str] = None) -> Dict[str, Any]:
+        """Manually execute a top-level sequence declared by the active target's Pack."""
+        if not name:
+            raise WebError("sequence_required", "Select a debug sequence")
+        with self._lock:
+            session = self._require_exclusive()
+            delegate = getattr(session.target, "debug_sequence_delegate", None)
+            pack_device = getattr(session.target, "_pack_device", None)
+            if delegate is None or pack_device is None:
+                raise WebError("pack_sequence_unavailable",
+                               "The connected target is not provided by a CMSIS-Pack", 409)
+            declared = any(seq.name == name and seq.pname == pname for seq in pack_device.sequences)
+            if not declared:
+                raise WebError("pack_sequence_not_found",
+                               "That sequence is not declared by the connected target's Pack", 404)
+            result = delegate.run_sequence(name, pname)
+            if result is None:
+                raise WebError("pack_sequence_disabled",
+                               "The selected sequence is disabled by the Pack or connection settings", 409)
+            self._record_activity_locked("pack-sequence", f"Ran CMSIS-Pack sequence {name}")
+            return {"ran": True, "name": name, "pname": pname}
 
     def _pack_cache(self):
         if cmsis_pack_manager is None:

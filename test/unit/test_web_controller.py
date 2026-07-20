@@ -444,6 +444,98 @@ def test_raspberry_pi_gpio_is_hidden_on_windows(tmp_path, monkeypatch):
     controller.close()
 
 
+def test_target_pack_info_lists_vendor_sequences(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    device = SimpleNamespace(
+        sequences=[SimpleNamespace(name="ResetSystem", pname="cm4", info="Vendor reset",
+                                   is_enabled=True)],
+        pack_description=SimpleNamespace(pack_name="Vendor.Device_DFP"),
+        pack_path="Vendor.Device_DFP.pack",
+        processors_map={"cm4": object()},
+    )
+    monkeypatch.setitem(web_controller.TARGET, "web_pack_test", type(
+        "WebPackTarget", (), {"_pack_device": device}))
+
+    result = controller.target_pack_info("web_pack_test")
+
+    assert result["source"] == "pack"
+    assert result["pack"]["name"] == "Vendor.Device_DFP"
+    assert result["sequences"] == [{
+        "name": "ResetSystem", "pname": "cm4", "info": "Vendor reset", "enabled": True}]
+    controller.close()
+
+
+def test_targets_deduplicates_populated_managed_pack_devices(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    monkeypatch.setattr(web_controller.ListGenerator, "list_targets", lambda name_filter=None: {
+        "targets": [
+            {"name": "mimxrt1011xxxxx", "source": "pack", "vendor": "NXP"},
+            {"name": "mimxrt1011xxxxx", "source": "pack", "vendor": "NXP"},
+        ]})
+
+    assert controller.targets()["targets"] == [
+        {"name": "mimxrt1011xxxxx", "source": "pack", "vendor": "NXP"}]
+    controller.close()
+
+
+def test_run_pack_sequence_validates_and_executes_declared_sequence(tmp_path):
+    controller = WebController(str(tmp_path))
+    sequence = SimpleNamespace(name="ResetSystem", pname=None)
+    calls = []
+    delegate = SimpleNamespace(run_sequence=lambda name, pname: calls.append((name, pname)) or object())
+    target = SimpleNamespace(
+        _pack_device=SimpleNamespace(sequences=[sequence]), debug_sequence_delegate=delegate)
+    controller._session = SimpleNamespace(is_open=True, target=target)
+
+    assert controller.run_pack_sequence("ResetSystem") == {
+        "ran": True, "name": "ResetSystem", "pname": None}
+    assert calls == [("ResetSystem", None)]
+    with pytest.raises(WebError) as error:
+        controller.run_pack_sequence("DebugPortStop")
+    assert error.value.code == "pack_sequence_not_found"
+    controller._session = None
+    controller.close()
+
+
+def test_target_recovery_reports_family_implementation(tmp_path):
+    controller = WebController(str(tmp_path))
+
+    class Kinetis:
+        def check_flash_security(self):
+            pass
+
+        def mass_erase(self):
+            pass
+
+    class Device(Kinetis):
+        pass
+
+    assert controller._target_recovery_info(Device) == {
+        "available": True,
+        "implementation": "Kinetis MDM-AP mass erase",
+        "handler": f"{Kinetis.__module__}.Kinetis",
+        "automatic": True,
+    }
+    controller.close()
+
+
+def test_unlock_target_uses_target_mass_erase(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    calls = []
+    target = SimpleNamespace(
+        mass_erase=lambda: calls.append("erase") or True,
+        is_locked=lambda: False,
+    )
+    controller._session = SimpleNamespace(is_open=True, target=target)
+    monkeypatch.setattr(controller, "snapshot", lambda: {"connected": True})
+
+    assert controller.unlock_target() == {"connected": True}
+    assert calls == ["erase"]
+    assert controller._target_locked is False
+    controller._session = None
+    controller.close()
+
+
 def test_force_raspberry_pi_gpio_adds_preview_adapter(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path), force_rpi=True)
     monkeypatch.setattr("pyocd.web.controller.sys.platform", "win32")
