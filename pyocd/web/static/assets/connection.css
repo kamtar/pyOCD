@@ -233,6 +233,16 @@ select:focus {
   display: none;
 }
 
+.target-options-heading {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
 .target-option {
   display: flex;
   width: 100%;
