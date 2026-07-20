@@ -37,6 +37,10 @@ Select **Raspberry Pi GPIO SWD** on the Connection page. The GPIO fields use BCM
 The defaults are SWCLK 20, SWDIO 21, and nRESET 16. The interface also exposes frequency. Raspberry Pi Zero through Pi 4
 are supported; Pi 5 is not supported by the current backend. Use 3.3 V logic and a shared ground.
 
+To preview the Raspberry Pi adapter-specific controls on another platform, start the web interface
+with `pyocd web --force-rpi`. This only adds the adapter to the list; connecting still fails when the
+GPIO backend is unavailable.
+
 ## Target ownership
 
 Only one target operation runs at a time. Direct browser debug, flash, erase, memory, and console

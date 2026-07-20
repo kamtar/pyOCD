@@ -121,13 +121,17 @@ class WebController:
         for name in ("frequency", "connect_mode", "dap_protocol")
     }
     SAFE_SESSION_OPTIONS = {
-        "auto_unlock", "connect_mode", "dap_protocol", "frequency",
-        "reset_type", "resume_on_disconnect",
+        "auto_unlock", "cmsis_dap.deferred_transfers", "cmsis_dap.limit_packets",
+        "cmsis_dap.prefer_v1", "connect_mode", "dap_protocol", "dap_swj_enable",
+        "dap_swj_use_dormant", "frequency", "jlink.power", "reset.hold_time",
+        "reset.post_delay", "reset_type", "resume_on_disconnect",
+        "stlink.v3_prescaler",
     }
 
     def __init__(
             self, artifact_dir: Optional[str] = None, unsafe_console: bool = False,
-            gdb_executable: Optional[str] = None, config_path: Optional[str] = None):
+            gdb_executable: Optional[str] = None, config_path: Optional[str] = None,
+            force_rpi: bool = False):
         self._lock = threading.RLock()
         self._pack_lock = threading.Lock()
         self._pack_cache_instance = None
@@ -147,6 +151,7 @@ class WebController:
         self._debugger_stopped = threading.Event()
         self._debugger_core = 0
         self._gdb_executable = gdb_executable
+        self._force_rpi = force_rpi
         self._target_locked: Optional[bool] = None
         # Capture static connection details once. Some remote probes implement property
         # reads as transport requests, so flash jobs must serve polling from this cache.
@@ -420,6 +425,18 @@ class WebController:
                                           "vendor_name": probe.vendor_name, "product_name": probe.product_name})
             except Exception:
                 pass
+        if self._force_rpi and not any(
+                probe.get("unique_id") == "rpi-gpio:" for probe in obj["boards"]):
+            obj["boards"].append({
+                "unique_id": "rpi-gpio:",
+                "info": "Raspberry Pi GPIO SWD (preview only)",
+                "board_vendor": "Raspberry Pi",
+                "board_name": "GPIO header",
+                "target": "cortex_m",
+                "vendor_name": "Raspberry Pi",
+                "product_name": "GPIO SWD",
+                "preview_only": True,
+            })
         return obj
 
     def targets(self, query: Optional[str] = None) -> Dict[str, Any]:

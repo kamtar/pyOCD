@@ -444,6 +444,28 @@ def test_raspberry_pi_gpio_is_hidden_on_windows(tmp_path, monkeypatch):
     controller.close()
 
 
+def test_force_raspberry_pi_gpio_adds_preview_adapter(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path), force_rpi=True)
+    monkeypatch.setattr("pyocd.web.controller.sys.platform", "win32")
+    monkeypatch.setattr(
+        "pyocd.web.controller.ListGenerator.list_probes",
+        lambda: {"boards": []})
+
+    result = controller.probes()
+
+    assert result["boards"] == [{
+        "unique_id": "rpi-gpio:",
+        "info": "Raspberry Pi GPIO SWD (preview only)",
+        "board_vendor": "Raspberry Pi",
+        "board_name": "GPIO header",
+        "target": "cortex_m",
+        "vendor_name": "Raspberry Pi",
+        "product_name": "GPIO SWD",
+        "preview_only": True,
+    }]
+    controller.close()
+
+
 def test_connect_defaults_to_first_available_probe(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path))
     selected = []

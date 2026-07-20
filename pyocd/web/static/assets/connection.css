@@ -1,0 +1,252 @@
+select {
+  min-height: 42px;
+  padding: 10px 42px 10px 12px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 8px !important;
+  appearance: none;
+  background-color: #06120c !important;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) !important;
+  background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50% !important;
+  background-size: 5px 5px, 5px 5px !important;
+  background-repeat: no-repeat !important;
+  color: var(--text) !important;
+}
+
+select:hover,
+select:focus {
+  border-color: var(--cyan) !important;
+  outline: none;
+}
+
+.topmcu select {
+  min-height: 34px;
+  padding-block: 6px !important;
+}
+
+#connection .cols.setup > .form {
+  align-items: center;
+}
+
+#connection .cols.setup {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+#connection .cols.setup > .card {
+  height: 100%;
+}
+
+#connection .form > h3,
+#connection .form > label,
+#connection .form > .target-field,
+#connection .form > .formrow,
+#connection .form > .range,
+#connection .form > .formactions,
+#connection .form > .pack-open {
+  width: min(100%, 720px);
+}
+
+#connection .form > h3 {
+  align-self: center;
+}
+
+#connection .form > label,
+#connection .form > .target-field {
+  align-self: center;
+}
+
+#connection .form > .formrow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#connection .form > .pack-open {
+  align-self: center;
+  margin-top: -5px;
+}
+
+#connection .form > .formactions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-self: center;
+  margin-top: auto;
+}
+
+#connection .form > .formactions button {
+  width: 100%;
+}
+
+#connection .range {
+  width: 100%;
+}
+
+.advanced-group {
+  width: min(100%, 720px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #091810;
+}
+
+.advanced-group.hidden {
+  display: none;
+}
+
+.advanced-group > summary {
+  padding: 12px 14px;
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.advanced-group > summary::marker {
+  color: var(--cyan);
+}
+
+.advanced-group[open] > summary {
+  border-bottom: 1px solid var(--line);
+  background: #10251a;
+}
+
+.advanced-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.advanced-content > label,
+.advanced-content .formrow > label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #b8c6d4;
+  font-size: 12px;
+}
+
+.advanced-content > .formrow {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.advanced-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.advanced-content .check {
+  flex-direction: row !important;
+  align-items: flex-start;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #07130d;
+}
+
+.advanced-content .check > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.advanced-content small {
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+#rpiOptions .pins {
+  margin-inline: 0;
+  padding-inline: 20px;
+}
+
+.target-combobox {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.target-combobox::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  pointer-events: none;
+  transform: translateY(-70%) rotate(45deg);
+  transition: transform .15s ease;
+}
+
+.target-combobox:has(input[aria-expanded="true"])::after {
+  transform: translateY(-20%) rotate(225deg);
+}
+
+#targetSelect {
+  padding-right: 42px;
+}
+
+.target-options {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #06120c;
+  box-shadow: var(--shadow);
+}
+
+.target-options[hidden] {
+  display: none;
+}
+
+.target-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.target-option:last-child {
+  border-bottom: 0;
+}
+
+.target-option:hover,
+.target-option:focus {
+  background: #172536;
+  transform: none;
+}
+
+.target-option small {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1000px) {
+  #connection .cols.setup,
+  .advanced-checks {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  #connection .form > .formrow,
+  #connection .form > .formactions {
+    grid-template-columns: 1fr;
+  }
+}

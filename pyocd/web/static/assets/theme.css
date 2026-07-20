@@ -55,7 +55,6 @@ aside { background: #091810; }
 .optional-group summary::marker { color: var(--cyan); }
 .optional-content { display: flex; flex-direction: column; gap: 14px; padding: 4px 14px 14px; border-top: 1px solid var(--line); }
 .optional-content > label { margin-top: 10px; }
-.cols.setup:has(#gpioCard.hidden) { grid-template-columns: 1fr; }
 @media (max-width: 1050px) {
   header > .topelf { display: none; }
   .topmcu select { max-width: 140px; }

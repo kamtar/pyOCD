@@ -346,13 +346,15 @@ def create_application(
 
 def run_webserver(host: str = "127.0.0.1", port: int = 8080, token: Optional[str] = None,
                   artifact_dir: Optional[str] = None, unsafe_console: bool = False,
-                  insecure: bool = False, gdb_executable: Optional[str] = None) -> None:
+                  insecure: bool = False, gdb_executable: Optional[str] = None,
+                  force_rpi: bool = False) -> None:
     from aiohttp import web
     effective_token = _effective_auth_token(host, token, insecure)
     controller = WebController(
         artifact_dir=artifact_dir,
         unsafe_console=unsafe_console,
-        gdb_executable=gdb_executable)
+        gdb_executable=gdb_executable,
+        force_rpi=force_rpi)
     LOG.info("pyOCD web interface listening on http://%s:%d", host, port)
     web.run_app(
         create_application(

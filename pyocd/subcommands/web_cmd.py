@@ -41,6 +41,10 @@ class WebSubcommand(SubcommandBase):
         parser.add_argument(
             "--gdb-executable",
             help="GDB executable used by the browser debugger (auto-detected by default).")
+        parser.add_argument(
+            "--force-rpi",
+            action="store_true",
+            help="Show the Raspberry Pi GPIO adapter even when it is unavailable (UI preview only).")
         return [cls.CommonOptions.LOGGING, parser]
 
     def invoke(self) -> int:
@@ -52,5 +56,6 @@ class WebSubcommand(SubcommandBase):
                 encoding="utf-8").strip()
         run_webserver(self._args.host, self._args.port, token,
                       self._args.artifact_dir, self._args.unsafe_console,
-                      self._args.insecure, self._args.gdb_executable)
+                      self._args.insecure, self._args.gdb_executable,
+                      self._args.force_rpi)
         return 0
