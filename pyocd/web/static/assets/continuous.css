@@ -1,5 +1,5 @@
 /* Keep every workspace section in one continuous, scrollable document. */
-aside { position: sticky; top: 72px; height: calc(100vh - 72px); align-self: start; }
+aside { position: sticky; top: 80px; height: calc(100vh - 80px); align-self: start; }
 main { display: flex; flex-direction: column; }
 #overview { order: 1; }
 #connection { order: 2; }
