@@ -133,7 +133,7 @@ class WebController:
     def __init__(
             self, artifact_dir: Optional[str] = None, unsafe_console: bool = False,
             gdb_executable: Optional[str] = None, config_path: Optional[str] = None,
-            force_rpi: bool = False):
+            force_rpi: bool = False, serve_local_only: bool = True):
         self._lock = threading.RLock()
         self._pack_lock = threading.Lock()
         self._pack_cache_instance = None
@@ -153,6 +153,7 @@ class WebController:
         self._debugger_stopped = threading.Event()
         self._debugger_core = 0
         self._gdb_executable = gdb_executable
+        self._serve_local_only = serve_local_only
         self._force_rpi = force_rpi
         self._target_locked: Optional[bool] = None
         # Capture static connection details once. Some remote probes implement property
@@ -1122,6 +1123,7 @@ class WebController:
                     "invalid_core",
                     "Core(s) are not available: " + ", ".join(map(str, invalid_cores)))
             session.options.set("gdbserver_port", port)
+            session.options.set("serve_local_only", self._serve_local_only)
             try:
                 for core in selected_cores:
                     server = GDBServer(session, core=core)
@@ -1205,6 +1207,7 @@ class WebController:
                 self._debugger_state = "stopped"
                 self._debugger_stopped.set()
                 session.options.set("gdbserver_port", port)
+                session.options.set("serve_local_only", self._serve_local_only)
                 server = GDBServer(session, core=core)
                 session.gdbservers[core] = server
                 self._gdb[core] = server

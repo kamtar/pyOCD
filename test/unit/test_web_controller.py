@@ -668,8 +668,9 @@ def test_connect_closes_local_session_when_console_setup_fails(tmp_path, monkeyp
 
 
 def test_gdb_start_rolls_back_partial_startup(tmp_path, monkeypatch):
-    controller = WebController(str(tmp_path))
+    controller = WebController(str(tmp_path), serve_local_only=False)
     stopped = []
+    option_values = {}
 
     class FakeServer:
         def __init__(self, session, core):
@@ -682,7 +683,7 @@ def test_gdb_start_rolls_back_partial_startup(tmp_path, monkeypatch):
         def stop(self):
             stopped.append(self.core)
 
-    options = SimpleNamespace(set=lambda key, value: None)
+    options = SimpleNamespace(set=lambda key, value: option_values.__setitem__(key, value))
     session = SimpleNamespace(
         is_open=True, target=SimpleNamespace(cores={0: object(), 1: object()}),
         options=options, gdbservers={})
@@ -693,6 +694,7 @@ def test_gdb_start_rolls_back_partial_startup(tmp_path, monkeypatch):
         controller.gdb_start(3333, [0, 1])
 
     assert stopped == [0, 1]
+    assert option_values["serve_local_only"] is False
     assert controller._gdb == {}
     assert session.gdbservers == {}
     controller._session = None

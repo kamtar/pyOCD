@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 from pathlib import Path
+import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
@@ -18,6 +19,29 @@ MAX_DUMP = 512 * 1024 * 1024
 DEFAULT_AUTH_TOKEN = "cutter"
 DEFAULT_GDB_PORT = 3030
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+WEB_CLIENT_TIMEOUT = 3.0
+
+
+class _WebClients:
+    """Track recently active browser tabs from their state-poll heartbeats."""
+
+    def __init__(self, timeout: float = WEB_CLIENT_TIMEOUT):
+        self._timeout = timeout
+        self._seen: Dict[str, float] = {}
+
+    def touch(self, client_id: Optional[str], now: Optional[float] = None) -> Dict[str, int]:
+        current = time.monotonic() if now is None else now
+        self._seen = {
+            key: seen for key, seen in self._seen.items()
+            if current - seen <= self._timeout
+        }
+        if client_id:
+            self._seen[client_id] = current
+        total = len(self._seen)
+        return {
+            "connected": total,
+            "others": max(0, total - (1 if client_id in self._seen else 0)),
+        }
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -42,6 +66,7 @@ def create_application(
             "The web interface requires aiohttp; reinstall pyOCD to restore its dependencies") from exc
 
     ctrl = controller or WebController()
+    web_clients = _WebClients()
 
     @web.middleware
     async def errors(request, handler):
@@ -104,7 +129,10 @@ def create_application(
         return await request.json() if request.can_read_body else {}
 
     async def state(request):
-        return web.json_response(ctrl.snapshot())
+        snapshot = ctrl.snapshot()
+        snapshot["web_clients"] = web_clients.touch(
+            request.headers.get("X-pyOCD-Client-ID"))
+        return web.json_response(snapshot)
 
     async def configuration(request):
         if request.method == "GET":
@@ -369,7 +397,8 @@ def run_webserver(host: str = "127.0.0.1", port: int = 8080, token: Optional[str
         artifact_dir=artifact_dir,
         unsafe_console=unsafe_console,
         gdb_executable=gdb_executable,
-        force_rpi=force_rpi)
+        force_rpi=force_rpi,
+        serve_local_only=_is_loopback_host(host))
     LOG.info("pyOCD web interface listening on http://%s:%d", host, port)
     web.run_app(
         create_application(

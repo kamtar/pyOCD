@@ -4,6 +4,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from pyocd.web.application import (
     DEFAULT_AUTH_TOKEN,
+    _WebClients,
     _effective_auth_token,
     create_application,
 )
@@ -14,6 +15,15 @@ CSRF = {"X-pyOCD-CSRF": "1"}
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def test_web_clients_tracks_tabs_and_expires_stale_heartbeats():
+    clients = _WebClients(timeout=3.0)
+
+    assert clients.touch("tab-a", now=1.0) == {"connected": 1, "others": 0}
+    assert clients.touch("tab-b", now=2.0) == {"connected": 2, "others": 1}
+    assert clients.touch("tab-a", now=2.5) == {"connected": 2, "others": 1}
+    assert clients.touch("tab-a", now=5.1) == {"connected": 1, "others": 0}
 
 
 def test_health_and_frontend(tmp_path):
