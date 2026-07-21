@@ -6,9 +6,11 @@ import asyncio
 import hmac
 import json
 import logging
+import os
 from pathlib import Path
+import sys
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlsplit
 
 from .controller import WebController, WebError
@@ -58,7 +60,8 @@ def _effective_auth_token(host: str, token: Optional[str], insecure: bool) -> Op
 
 def create_application(
         controller: Optional[WebController] = None, token: Optional[str] = None,
-        local_only: bool = True):
+        local_only: bool = True,
+        restart_process: Optional[Callable[[], None]] = None):
     try:
         from aiohttp import web
     except ImportError as exc:
@@ -67,6 +70,16 @@ def create_application(
 
     ctrl = controller or WebController()
     web_clients = _WebClients()
+
+    def default_restart_process() -> None:
+        # Replace the process instead of attempting to unwind possibly wedged
+        # probe/GDB threads. This also preserves all original command options.
+        argv = [sys.executable, "-m", "pyocd", *sys.argv[1:]]
+        if getattr(sys, "frozen", False):
+            argv = [sys.executable, *sys.argv[1:]]
+        os.execv(sys.executable, argv)
+
+    restart = restart_process or default_restart_process
 
     @web.middleware
     async def errors(request, handler):
@@ -141,6 +154,12 @@ def create_application(
 
     async def health(request):
         return web.json_response({"status": "ok"})
+
+    async def runtime_restart(request):
+        # Deliberately does not touch the controller or its lock. This endpoint
+        # must remain usable when a probe operation has wedged a worker thread.
+        asyncio.get_running_loop().call_later(0.25, restart)
+        return web.json_response({"accepted": True, "action": "restart"}, status=202)
 
     async def system_info(request):
         return web.json_response(await asyncio.to_thread(ctrl.system_info))
@@ -336,6 +355,7 @@ def create_application(
 
     routes = [
         web.get("/api/v1/state", state), web.get("/api/v1/health", health),
+        web.post("/api/v1/runtime/restart", runtime_restart),
         web.get("/api/v1/system", system_info),
         web.post("/api/v1/system/power/{action}", system_power),
         web.get("/api/v1/update/check", update_check),

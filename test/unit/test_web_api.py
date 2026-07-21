@@ -92,6 +92,24 @@ def test_system_power_route(tmp_path):
     run(scenario())
 
 
+def test_runtime_restart_route_schedules_process_replacement(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        restarted = asyncio.Event()
+        client = TestClient(TestServer(create_application(
+            controller, restart_process=restarted.set)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/v1/runtime/restart", json={}, headers=CSRF)
+            assert response.status == 202
+            assert await response.json() == {"accepted": True, "action": "restart"}
+            await asyncio.wait_for(restarted.wait(), timeout=1.0)
+        finally:
+            await client.close()
+    run(scenario())
+
+
 def test_update_check_route(tmp_path):
     async def scenario():
         controller = WebController(str(tmp_path))

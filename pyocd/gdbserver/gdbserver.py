@@ -445,15 +445,21 @@ class GDBServer(threading.Thread):
         # Add the gdbserver command group.
         self._command_context.command_set.add_command_group('gdbserver')
 
-    def stop(self, wait=True):
+    def stop(self, wait=True, timeout=2.0):
+        """Request shutdown without allowing a failed probe to block forever."""
         if self.is_alive():
             self.shutdown_event.set()
             if wait:
                 LOG.debug("GDB server on port %d shutdown event; waiting for thread exit", self.port)
-                self.join()
+                self.join(timeout)
+                if self.is_alive():
+                    LOG.warning(
+                        "GDB server on port %d did not stop within %.1f seconds; "
+                        "continuing shutdown", self.port, timeout)
             else:
                 LOG.debug("GDB server on port %d shutdown event", self.port)
-            LOG.info("GDB server on port %d stopped", self.port)
+            if not self.is_alive():
+                LOG.info("GDB server on port %d stopped", self.port)
 
 
     def _cleanup_client_sessions(self):

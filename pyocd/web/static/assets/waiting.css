@@ -8,6 +8,22 @@
     backdrop-filter: blur(4px);
 }
 
+.restart-pyocd {
+    position: fixed;
+    left: 14px;
+    bottom: 14px;
+    z-index: 110;
+    border-color: #765e28;
+    background: #2c2618;
+    color: var(--amber);
+    font-weight: 700;
+}
+
+.restart-pyocd.restarting {
+    pointer-events: none;
+    opacity: .65;
+}
+
 .waiting-overlay[hidden] {
     display: none;
 }
