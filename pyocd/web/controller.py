@@ -1124,6 +1124,10 @@ class WebController:
                     "Core(s) are not available: " + ", ".join(map(str, invalid_cores)))
             session.options.set("gdbserver_port", port)
             session.options.set("serve_local_only", self._serve_local_only)
+            # The web UI owns this server's lifetime. A GDB detach must only
+            # end that client session, leaving the listener ready for another
+            # connection until the user turns the service off.
+            session.options.set("persist", True)
             try:
                 for core in selected_cores:
                     server = GDBServer(session, core=core)

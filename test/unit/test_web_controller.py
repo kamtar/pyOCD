@@ -695,6 +695,7 @@ def test_gdb_start_rolls_back_partial_startup(tmp_path, monkeypatch):
 
     assert stopped == [0, 1]
     assert option_values["serve_local_only"] is False
+    assert option_values["persist"] is True
     assert controller._gdb == {}
     assert session.gdbservers == {}
     controller._session = None
