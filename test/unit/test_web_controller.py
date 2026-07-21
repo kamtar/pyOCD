@@ -248,6 +248,7 @@ def test_pack_catalog_search_and_install(tmp_path, monkeypatch):
 
     cache = Cache()
     populated = []
+    controller._target_catalog_path.write_text('{"targets": []}', encoding="utf-8")
     monkeypatch.setattr(controller, "_pack_cache", lambda: cache)
     monkeypatch.setattr(
         "pyocd.web.controller.pack_target.ManagedPacks.populate_target", populated.append)
@@ -261,6 +262,7 @@ def test_pack_catalog_search_and_install(tmp_path, monkeypatch):
     assert installed["device"] == "STM32F401RE"
     assert cache.downloaded == [ref]
     assert populated == ["STM32F401RE"]
+    assert not controller._target_catalog_path.exists()
     controller.close()
 
 
@@ -475,6 +477,29 @@ def test_targets_deduplicates_populated_managed_pack_devices(tmp_path, monkeypat
 
     assert controller.targets()["targets"] == [
         {"name": "mimxrt1011xxxxx", "source": "pack", "vendor": "NXP"}]
+    controller.close()
+
+
+def test_targets_catalog_is_disk_cached_and_can_be_invalidated(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    calls = []
+
+    def list_targets(name_filter=None):
+        calls.append(name_filter)
+        return {"targets": [{"name": "cached-target", "source": "builtin"}]}
+
+    monkeypatch.setattr(web_controller.ListGenerator, "list_targets", list_targets)
+
+    first = controller.targets()
+    assert controller._target_catalog_path.exists()
+    first["targets"].clear()
+    assert controller.targets()["targets"] == [{"name": "cached-target", "source": "builtin"}]
+    assert calls == [None]
+
+    controller._invalidate_target_catalog()
+    assert not controller._target_catalog_path.exists()
+    assert controller.targets()["targets"] == [{"name": "cached-target", "source": "builtin"}]
+    assert calls == [None, None]
     controller.close()
 
 

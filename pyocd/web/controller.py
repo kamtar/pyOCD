@@ -136,6 +136,7 @@ class WebController:
             force_rpi: bool = False, serve_local_only: bool = True):
         self._lock = threading.RLock()
         self._pack_lock = threading.Lock()
+        self._target_catalog_lock = threading.RLock()
         self._pack_cache_instance = None
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="pyocd-web")
@@ -170,6 +171,18 @@ class WebController:
             artifact_dir or tempfile.mkdtemp(
                 prefix="pyocd-web-"))
         self._artifact_dir.mkdir(parents=True, exist_ok=True)
+        # Catalog generation can parse every installed CMSIS-Pack. Cache its
+        # JSON representation on disk so a Pi does not retain the complete
+        # Python object graph between browser requests.
+        self._target_catalog_path = self._artifact_dir / ".target-catalog.json"
+        self._target_catalog_invalidated = False
+        try:
+            self._target_catalog_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            self._target_catalog_invalidated = True
+            LOG.warning("unable to clear stale target catalog cache: %s", exc)
         self.unsafe_console = unsafe_console
         self._started_at = time.time()
 
@@ -443,16 +456,50 @@ class WebController:
         return obj
 
     def targets(self, query: Optional[str] = None) -> Dict[str, Any]:
-        result = ListGenerator.list_targets(name_filter=query)
-        unique_targets: Dict[str, Dict[str, Any]] = {}
-        for target in result.get("targets", []):
-            name = target.get("name")
-            if name and name != "cortex_m":
-                # Managed Pack targets can appear once from TARGET and once from
-                # the Pack cache after metadata inspection has populated them.
-                unique_targets.setdefault(name, target)
-        result["targets"] = list(unique_targets.values())
-        return result
+        # The web client requests the complete list. Cache only that form so a
+        # caller that asks for a filtered list retains ListGenerator's existing
+        # filtering semantics.
+        with self._target_catalog_lock:
+            if query is None and not self._target_catalog_invalidated:
+                try:
+                    cached = json.loads(self._target_catalog_path.read_text(encoding="utf-8"))
+                    if isinstance(cached, dict) and isinstance(cached.get("targets"), list):
+                        return cached
+                except (OSError, ValueError):
+                    pass
+
+            result = ListGenerator.list_targets(name_filter=query)
+            unique_targets: Dict[str, Dict[str, Any]] = {}
+            for target in result.get("targets", []):
+                name = target.get("name")
+                if name and name != "cortex_m":
+                    # Managed Pack targets can appear once from TARGET and once from
+                    # the Pack cache after metadata inspection has populated them.
+                    unique_targets.setdefault(name, target)
+            result["targets"] = list(unique_targets.values())
+            if query is None:
+                temporary = self._target_catalog_path.with_suffix(".tmp")
+                try:
+                    temporary.write_text(json.dumps(result), encoding="utf-8")
+                    temporary.replace(self._target_catalog_path)
+                    self._target_catalog_invalidated = False
+                except OSError:
+                    # The catalog is an optimisation; serving it must not depend
+                    # on the artifact directory remaining writable.
+                    try:
+                        temporary.unlink()
+                    except OSError:
+                        pass
+            return result
+
+    def _invalidate_target_catalog(self) -> None:
+        """Discard target metadata after installed Pack contents change."""
+        with self._target_catalog_lock:
+            self._target_catalog_invalidated = True
+            try:
+                self._target_catalog_path.unlink()
+            except OSError:
+                pass
 
     def target_pack_info(self, target_name: str) -> Dict[str, Any]:
         """Return CMSIS-Pack debug-sequence metadata without opening a probe."""
@@ -603,6 +650,7 @@ class WebController:
             cache.download_pack_list(refs)
         name = str(match.get("name", device_name))
         pack_target.ManagedPacks.populate_target(name)
+        self._invalidate_target_catalog()
         return {"installed": True, "device": name, "packs": [str(ref) for ref in refs]}
 
     def connect(self, profile: Dict[str, Any]) -> Dict[str, Any]:
