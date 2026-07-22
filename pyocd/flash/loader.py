@@ -180,8 +180,6 @@ class MemoryLoader:
         target = session.board.target
         self._delegate = target.debug_sequence_delegate
         self._map = target.memory_map
-        # Non-internal targets have double buffering disabled
-        self._disable_double_buffering = any(hasattr(target, attr) for attr in ('_cbuild_device', '_pack_device'))
 
         if progress is not None:
             self._progress = progress
@@ -246,9 +244,10 @@ class MemoryLoader:
                         raise exceptions.TargetSupportError(f"flash memory region at address {address:#010x} has no flash instance")
                     region_builder = region.flash.get_flash_builder()
                     region_builder.log_performance = False
-                    # Disable double buffering for non-internal targets
-                    if self._disable_double_buffering:
-                        region_builder.enable_double_buffer(False)
+                    # FlashBuilder enables double buffering only when the algorithm advertises
+                    # at least two valid page buffers. Pack and cbuild targets are allowed to use
+                    # that capability just like built-in targets.
+                    region_builder.enable_double_buffer(region.flash.is_double_buffering_supported)
                 elif region.is_writable:
                     # Casting to a RamRegion is technically not quite right, since we're only checking
                     # that the region is writable

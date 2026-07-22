@@ -59,7 +59,7 @@ class LoadSubcommand(SubcommandBase):
         parser_options.add_argument("-a", "--base-address", metavar="ADDR", type=int_base_0,
             help="Base address used for the address where to write a binary. Defaults to start of flash. "
                  "Only allowed if a single binary file is being loaded.")
-        parser_options.add_argument("--trust-crc", action="store_true",
+        parser_options.add_argument("--trust-crc", action="store_true", default=None,
             help="Use only the CRC of each page to determine if it already has the same data.")
         parser_options.add_argument("--format", choices=("bin", "hex", "elf"),
             help="File format. Default is to use the file's extension. If multiple files are provided, then "

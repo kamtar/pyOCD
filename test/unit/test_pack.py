@@ -244,6 +244,9 @@ class TestFLM:
         buf1 = buf_top - k64algo.page_size
         buf2 = buf1 - k64algo.page_size
         assert d['page_buffers'] == [buf1, buf2]
+        assert d['analyzer_supported'] is True
+        assert d['analyzer_address'] == ram.start
+        assert d['end_stack'] == ram.start + flash_algo.PackFlashAlgo._ANALYZER_RAM_SIZE
 
     def test_algo_dict_one_page_buf(self, k64algo):
         # First get a full-sized algo allocation.
@@ -251,7 +254,10 @@ class TestFLM:
         d = k64algo.get_pyocd_flash_algo(k64algo.page_size, ram)
 
         # Create a memory region with only enough memory for one page buf + stack.
-        min_ram_size = len(d['instructions']) * 4 + k64algo.page_size + k64algo.page_size // 2
+        min_ram_size = (len(d['instructions']) * 4
+            + k64algo.page_size
+            + k64algo.page_size // 2
+            + flash_algo.PackFlashAlgo._ANALYZER_RAM_SIZE)
         min_ram = memory_map.RamRegion(0x20000000, length=min_ram_size)
         d = k64algo.get_pyocd_flash_algo(k64algo.page_size, min_ram)
 
@@ -260,6 +266,22 @@ class TestFLM:
         buf_top = align_down(instr_base, flash_algo.PackFlashAlgo._PAGE_BUFFER_ALIGN)
         buf1 = buf_top - k64algo.page_size
         assert d['page_buffers'] == [buf1]
+        assert d['analyzer_supported'] is True
+
+    def test_algo_dict_falls_back_without_analyzer(self, k64algo):
+        # Leave enough RAM for the flash algorithm, one page buffer, and minimum stack,
+        # but not enough for the optional analyzer reservation.
+        ram_size = (len(k64algo._FLASH_BLOB_HEADER) * 4
+            + len(k64algo.algo_data)
+            + k64algo.page_size
+            + k64algo._MIN_STACK_SIZE
+            + k64algo._PAGE_BUFFER_ALIGN - 1)
+        ram = memory_map.RamRegion(0x20000000, length=ram_size)
+        d = k64algo.get_pyocd_flash_algo(k64algo.page_size, ram)
+
+        assert d['analyzer_supported'] is False
+        assert 'analyzer_address' not in d
+        assert d['end_stack'] == ram.start
 
     # Flash Device:
     #   name=b'nRF53xxx_app'

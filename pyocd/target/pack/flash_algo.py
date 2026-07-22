@@ -92,6 +92,10 @@ class PackFlashAlgo:
     # Alignment for page buffers.
     _PAGE_BUFFER_ALIGN = 16
 
+    # Amount of RAM required by the generic Cortex-M CRC analyzer. This size is part of the
+    # contract documented by pyocd.flash.flash._ANALYZER_CODE.
+    _ANALYZER_RAM_SIZE = 0x600
+
     def __init__(self, data: Union[str, IO[bytes]]) -> None:
         """@brief Construct a PackFlashAlgo from a file-like object."""
         self.elf = ELFBinaryFile(data)
@@ -151,10 +155,10 @@ class PackFlashAlgo:
 
         Double buffering is supported as long as there is enough RAM.
 
-        Memory layout:
+        Memory layout (when enough RAM is available for the optional CRC analyzer):
         ```
-        [<--stack] [buf2] [buf1] [code]
-        ^ ram start                   ^ ram end
+        [analyzer] [<--stack] [buf2] [buf1] [code]
+        ^ ram start                              ^ ram end
         ```
 
         @param self
@@ -196,12 +200,19 @@ class PackFlashAlgo:
         addr = align_down(unaligned_buffer_addr, self._PAGE_BUFFER_ALIGN)
         addr_data2 = addr
 
-        # Stack
+        # Stack. First try to reserve space at the bottom of RAM for the generic CRC
+        # analyzer. If that would prevent even the minimum one-buffer layout from fitting,
+        # retain the previous behaviour and use all remaining RAM for the stack.
+        analyzer_address = ram_start
+        analyzer_end = analyzer_address + self._ANALYZER_RAM_SIZE
+        analyzer_supported = analyzer_end <= addr_data - self._MIN_STACK_SIZE
+        stack_limit = analyzer_end if analyzer_supported else ram_start
+
         # Select best fit for one or two data buffers and a variable size stack.
         # TODO Switching down from two to one buffer should probably be done with the stack size around
         #   mid-level instead of going all the way down to minimum first.
-        stack_size_one_buf = addr_data - ram_start
-        stack_size_two_bufs = addr_data2 - ram_start
+        stack_size_one_buf = addr_data - stack_limit
+        stack_size_two_bufs = addr_data2 - stack_limit
 
         # Check if we have enough space for the stack.
         if stack_size_one_buf < self._MIN_STACK_SIZE:
@@ -232,8 +243,6 @@ class PackFlashAlgo:
                 addr_load, addr_load - ram_start, len(instructions) * 4,
                 ram_start, ram_length
             )
-        # TODO - analyzer support
-
         # Start of actual code (after the flash blob header) when loaded into RAM.
         code_start = addr_load + self._FLASH_BLOB_HEADER_SIZE
 
@@ -250,12 +259,15 @@ class PackFlashAlgo:
             "pc_erase_sector": _sym("EraseSector"),
             "pc_program_page": _sym("ProgramPage"),
             "page_buffers": page_buffers,
+            "page_size": blocksize,
             "begin_stack": addr_stack,
             "end_stack": addr_stack - stack_size,
             "static_base": code_start + self.rw_start,
             "min_program_length": self.page_size,
-            "analyzer_supported": False
+            "analyzer_supported": analyzer_supported,
         }
+        if analyzer_supported:
+            flash_algo["analyzer_address"] = analyzer_address
         return flash_algo
 
     def _extract_symbols(self, symbols: Set[str], required: bool = False) -> Dict[str, int]:

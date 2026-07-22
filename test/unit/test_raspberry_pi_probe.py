@@ -273,5 +273,50 @@ def test_write_dp_data_and_parity():
         [(RaspberryPiProbe._ACK_OK << 1).to_bytes(1, "little")],
     ])
     probe.write_dp(0, value)
+    assert probe.sequences == []
+    probe.flush()
     expected = value | ((value.bit_count() & 1) << 32)
     assert probe.sequences == [((8, 0x81), (5,)), ((36, expected),)]
+
+
+def test_native_transactions_are_deferred_and_batched():
+    class TransactionGPIO(MockGPIO):
+        def __init__(self):
+            super().__init__()
+            self.transactions = []
+
+        def execute_swd_transactions(self, swclk, swdio, swdio_dir, retries, transactions):
+            self.transactions.append((swclk, swdio, swdio_dir, retries, transactions))
+            return [None, [0x12345678, 0x9abcdef0]]
+
+    gpio = TransactionGPIO()
+    probe = RaspberryPiProbe(gpio)
+    probe.write_ap_multiple(0xc, [1, 2, 3])
+    result_cb = probe.read_ap_multiple(0xc, 2, now=False)
+    assert gpio.transactions == []
+
+    assert result_cb() == [0x12345678, 0x9abcdef0]
+    assert gpio.transactions == [(
+        20,
+        21,
+        None,
+        50,
+        (
+            (False, True, 0xc, (1, 2, 3)),
+            (True, True, 0xc, 2),
+        ),
+    )]
+
+
+def test_deferred_callback_flushes_preceding_dp_write():
+    gpio = MockGPIO()
+    probe = ScriptedProbe([
+        [(RaspberryPiProbe._ACK_OK << 1).to_bytes(1, "little")],
+        [(RaspberryPiProbe._ACK_OK << 1).to_bytes(1, "little")],
+        [(0).to_bytes(5, "little")],
+    ])
+    probe.write_dp(0x8, 0x1000000)
+    result_cb = probe.read_dp(0, now=False)
+    assert probe.sequences == []
+    assert result_cb() == 0
+    assert len(probe.sequences) == 4

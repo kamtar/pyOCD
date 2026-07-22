@@ -317,33 +317,39 @@ class Flash:
     def compute_crcs(self, sectors):
         assert self.use_analyzer
 
-        data = []
-
         # Load analyzer code into target RAM.
         self.target.write_memory_block32(self.flash_algo['analyzer_address'], _ANALYZER_CODE)
 
-        # Convert address, size pairs into commands
-        # for the crc computation algorithm to preform
-        for addr, size in sectors:
-            size_val = msb(size)
-            addr_val = addr // size
-            # Size must be a power of 2
-            assert (1 << size_val) == size
-            # Address must be a multiple of size
-            assert (addr % size) == 0
-            val = (size_val << 0) | (addr_val << 16)
-            data.append(val)
+        # The analyzer consumes and replaces one 32-bit command per range in the first page
+        # buffer. Large images can have many more ranges than fit in that buffer, so process
+        # them in bounded batches rather than overwriting adjacent RAM.
+        command_buffer_size = self.flash_algo.get('page_size', self.region.page_size)
+        max_commands = command_buffer_size // 4
+        assert max_commands > 0
 
-        self.target.write_memory_block32(self.page_buffers[0], data)
+        results = []
+        for offset in range(0, len(sectors), max_commands):
+            data = []
+            for addr, size in sectors[offset:offset + max_commands]:
+                size_val = msb(size)
+                addr_val = addr // size
+                # Size must be a power of 2
+                assert (1 << size_val) == size
+                # Address must be a multiple of size
+                assert (addr % size) == 0
+                data.append((size_val << 0) | (addr_val << 16))
 
-        # update core register to execute the subroutine
-        TRACE.debug("call compute crc(%x, %x)", self.page_buffers[0], len(data))
-        self._call_function_and_wait(self.flash_algo['analyzer_address'], self.page_buffers[0], len(data),
-                timeout=self.target.session.options.get('flash.timeout.analyzer'))
+            self.target.write_memory_block32(self.page_buffers[0], data)
 
-        # Read back the CRCs for each section
-        data = self.target.read_memory_block32(self.page_buffers[0], len(data))
-        return data
+            # Update core registers to execute the subroutine.
+            TRACE.debug("call compute crc(%x, %x)", self.page_buffers[0], len(data))
+            self._call_function_and_wait(self.flash_algo['analyzer_address'], self.page_buffers[0], len(data),
+                    timeout=self.target.session.options.get('flash.timeout.analyzer'))
+
+            # Read back the CRCs for this batch.
+            results.extend(self.target.read_memory_block32(self.page_buffers[0], len(data)))
+
+        return results
 
     def erase_all(self):
         """@brief Erase all the flash.

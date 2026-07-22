@@ -17,6 +17,31 @@ from ...core.plugin import Plugin
 LOG = logging.getLogger(__name__)
 
 
+class _PendingTransfer:
+    """Result holder for a deferred native or portable SWD transaction."""
+
+    def __init__(self, probe: "RaspberryPiProbe", is_read: bool, ap: bool, addr: int, payload) -> None:
+        self.probe = probe
+        self.is_read = is_read
+        self.ap = ap
+        self.addr = addr
+        self.payload = payload
+        self.result = None
+        self.error: Optional[Exception] = None
+        self.done = False
+
+    @property
+    def descriptor(self):
+        return (self.is_read, self.ap, self.addr, self.payload)
+
+    def get(self):
+        if not self.done:
+            self.probe.flush()
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
 class RaspberryPiProbe(DebugProbe):
     """SWD debug probe using the GPIO header of a Broadcom-based Raspberry Pi."""
 
@@ -58,6 +83,7 @@ class RaspberryPiProbe(DebugProbe):
         self._reset_asserted = False
         self._restore_pins = True
         self._wait_retries = 50
+        self._pending_transfers = []
 
     @property
     def vendor_name(self) -> str:
@@ -138,8 +164,12 @@ class RaspberryPiProbe(DebugProbe):
             raise
 
     def close(self) -> None:
-        self._protocol = None
-        self._cleanup_gpio()
+        try:
+            if self._is_open:
+                self.flush()
+        finally:
+            self._protocol = None
+            self._cleanup_gpio()
 
     def connect(self, protocol: Optional[DebugProbe.Protocol] = None) -> None:
         if protocol in (None, DebugProbe.Protocol.DEFAULT):
@@ -151,6 +181,7 @@ class RaspberryPiProbe(DebugProbe):
         self._protocol = protocol
 
     def disconnect(self) -> None:
+        self.flush()
         self._protocol = None
 
     def set_clock(self, frequency: float) -> None:
@@ -161,18 +192,21 @@ class RaspberryPiProbe(DebugProbe):
         self.swd_sequence(((length, bits),))
 
     def swd_sequence(self, sequences) -> Tuple[int, Sequence[bytes]]:
+        self.flush()
         assert self._gpio is not None
         reads = self._gpio.execute_swd_sequences(
             self._swclk, self._swdio, self._swdio_dir, sequences)
         return 0, reads
 
     def reset(self) -> None:
+        self.flush()
         self.assert_reset(True)
         sleep(self.session.options.get("reset.hold_time"))
         self.assert_reset(False)
         sleep(self.session.options.get("reset.post_delay"))
 
     def assert_reset(self, asserted: bool) -> None:
+        self.flush()
         if self._nreset is None:
             raise exceptions.ProbeError("rpi_gpio.nreset is not configured")
         if asserted:
@@ -193,6 +227,7 @@ class RaspberryPiProbe(DebugProbe):
         return int(pins), int(pins)
 
     def read_pins(self, group: DebugProbe.PinGroup, mask: int) -> int:
+        self.flush()
         if group is not DebugProbe.PinGroup.PROTOCOL_PINS:
             raise ValueError("only protocol pin access is supported")
         result = 0
@@ -205,6 +240,7 @@ class RaspberryPiProbe(DebugProbe):
         return int(result)
 
     def write_pins(self, group: DebugProbe.PinGroup, mask: int, value: int) -> None:
+        self.flush()
         if group is not DebugProbe.PinGroup.PROTOCOL_PINS:
             raise ValueError("only protocol pin access is supported")
         if mask & DebugProbe.ProtocolPin.SWCLK_TCK:
@@ -216,33 +252,87 @@ class RaspberryPiProbe(DebugProbe):
             self.assert_reset(not bool(value & DebugProbe.ProtocolPin.nRESET))
 
     def read_dp(self, addr: int, now: bool = True) -> Union[int, Callable[[], int]]:
-        value = self._read_reg(False, addr)
-        return value if now else lambda: value
+        pending = self._queue_read(False, addr, 1)
+        callback = lambda: pending.get()[0]
+        return callback() if now else callback
 
     def write_dp(self, addr: int, data: int) -> None:
-        self._write_reg(False, addr, data)
+        self._queue_write(False, addr, (data,))
 
     def read_ap(self, addr: int, now: bool = True) -> Union[int, Callable[[], int]]:
-        value = self.read_ap_multiple(addr, 1, now=True)[0]
-        return value if now else lambda: value
+        pending = self._queue_read(True, addr, 1)
+        callback = lambda: pending.get()[0]
+        return callback() if now else callback
 
     def write_ap(self, addr: int, data: int) -> None:
-        self._write_reg(True, addr, data)
+        self._queue_write(True, addr, (data,))
 
     def read_ap_multiple(self, addr: int, count: int = 1, now: bool = True):
-        if count < 1:
-            values = []
-        else:
-            self._read_reg(True, addr)  # Discard the pipelined value.
-            values = [self._read_reg(True, addr) for _ in range(count - 1)]
-            values.append(self._read_reg(False, self._DP_RDBUFF))
-        return values if now else lambda: values
+        pending = self._queue_read(True, addr, max(0, count))
+        return pending.get() if now else pending.get
 
     def write_ap_multiple(self, addr: int, values) -> None:
-        for value in values:
-            self._write_reg(True, addr, value)
+        self._queue_write(True, addr, tuple(values))
 
-    def _read_reg(self, ap: bool, addr: int) -> int:
+    def flush(self) -> None:
+        """Execute queued accesses, batching all native transactions in one call."""
+        if not self._pending_transfers:
+            return
+        pending = self._pending_transfers
+        self._pending_transfers = []
+        try:
+            assert self._gpio is not None
+            native_executor = getattr(self._gpio, "execute_swd_transactions", None)
+            if native_executor is not None:
+                results = native_executor(
+                    self._swclk,
+                    self._swdio,
+                    self._swdio_dir,
+                    self._wait_retries,
+                    tuple(item.descriptor for item in pending),
+                )
+                if len(results) != len(pending):
+                    raise exceptions.ProbeError("native Raspberry Pi GPIO transaction result count mismatch")
+                for item, result in zip(pending, results):
+                    item.result = result
+                    item.done = True
+            else:
+                for item in pending:
+                    if item.is_read:
+                        item.result = self._read_multiple_immediate(item.ap, item.addr, item.payload)
+                    else:
+                        for value in item.payload:
+                            self._write_reg_immediate(item.ap, item.addr, value)
+                        item.result = None
+                    item.done = True
+        except Exception as error:
+            for item in pending:
+                if not item.done:
+                    item.error = error
+                    item.done = True
+            raise
+
+    def _queue_read(self, ap: bool, addr: int, count: int) -> _PendingTransfer:
+        pending = _PendingTransfer(self, True, ap, addr, count)
+        self._pending_transfers.append(pending)
+        return pending
+
+    def _queue_write(self, ap: bool, addr: int, values) -> _PendingTransfer:
+        pending = _PendingTransfer(self, False, ap, addr, values)
+        self._pending_transfers.append(pending)
+        return pending
+
+    def _read_multiple_immediate(self, ap: bool, addr: int, count: int):
+        if count < 1:
+            return []
+        if not ap:
+            return [self._read_reg_immediate(False, addr) for _ in range(count)]
+        self._read_reg_immediate(True, addr)  # Discard the pipelined value.
+        values = [self._read_reg_immediate(True, addr) for _ in range(count - 1)]
+        values.append(self._read_reg_immediate(False, self._DP_RDBUFF))
+        return values
+
+    def _read_reg_immediate(self, ap: bool, addr: int) -> int:
         request = self._make_request(ap, True, addr)
         for _ in range(self._wait_retries + 1):
             _, response = self.swd_sequence(((8, request), (4,)))
@@ -262,7 +352,7 @@ class RaspberryPiProbe(DebugProbe):
                 raise exceptions.TransferProtocolError(f"invalid SWD ACK {ack:#x}")
         raise exceptions.TransferTimeoutError("Raspberry Pi GPIO SWD WAIT timeout")
 
-    def _write_reg(self, ap: bool, addr: int, value: int) -> None:
+    def _write_reg_immediate(self, ap: bool, addr: int, value: int) -> None:
         request = self._make_request(ap, False, addr)
         data = value | ((value.bit_count() & 1) << 32)
         for _ in range(self._wait_retries + 1):

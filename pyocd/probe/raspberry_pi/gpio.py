@@ -13,9 +13,15 @@ from typing import Dict, Iterable, Optional, Sequence, Tuple
 from ...core import exceptions
 
 try:
-    from ._bcm_gpio import BCMEngine
+    from ._bcm_gpio import (
+        BCMEngine,
+        SWDFaultError,
+        SWDProtocolError,
+        SWDWaitError,
+    )
 except ImportError:
     BCMEngine = None
+    SWDFaultError = SWDProtocolError = SWDWaitError = ()
 
 
 class BCMGPIO:
@@ -309,6 +315,30 @@ class NativeBCMGPIO(BCMGPIO):
             -1 if swdio_dir is None else swdio_dir,
             native_sequences,
         )
+
+    def execute_swd_transactions(
+            self,
+            swclk: int,
+            swdio: int,
+            swdio_dir: Optional[int],
+            wait_retries: int,
+            transactions,
+        ):
+        """Execute complete queued DP/AP transactions in one native call."""
+        try:
+            return self._engine.transactions(
+                swclk,
+                swdio,
+                -1 if swdio_dir is None else swdio_dir,
+                wait_retries,
+                transactions,
+            )
+        except SWDWaitError as error:
+            raise exceptions.TransferTimeoutError(str(error)) from error
+        except SWDFaultError as error:
+            raise exceptions.TransferFaultError(str(error)) from error
+        except SWDProtocolError as error:
+            raise exceptions.TransferProtocolError(str(error)) from error
 
     def swd_write_bits(self, swclk: int, swdio: int, value: int, count: int) -> None:
         self.execute_swd_sequences(swclk, swdio, None, ((count, value),))
