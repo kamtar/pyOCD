@@ -135,6 +135,10 @@ class GDBClientSession(threading.Thread):
         self.index: int = index
         self._server: GDBServer = server
         self._connected_socket: ConnectedSocket = connected_socket
+        remote_address = connected_socket.get_remote_address()
+        self.remote_address = (f"{remote_address[0]}:{remote_address[1]}"
+                               if isinstance(remote_address, tuple) and len(remote_address) >= 2
+                               else str(remote_address))
         self._packet_io = None
         self.is_extended_remote: bool = False
         self.non_stop: bool = False
@@ -1086,7 +1090,11 @@ class GDBServer(threading.Thread):
         if ops == b'FlashErase':
             LOG.debug("Command: Flash erase")
             self._flash_byte_count = 0
-            self._notify_activity("start")
+            fields = data.split(b':')
+            erase_address = int(fields[1].split(b',')[0], 16) if len(fields) > 1 else None
+            erase_length = int(fields[1].split(b',')[1].split(b'#')[0], 16) \
+                if len(fields) > 1 and b',' in fields[1] else None
+            self._notify_activity("erase", address=erase_address, length=erase_length)
             return self.create_rsp_packet(b"OK")
 
         elif ops == b'FlashWrite':

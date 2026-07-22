@@ -357,23 +357,28 @@ class WebController:
         with self._lock:
             now = time.time()
             job = self._gdb_flash_jobs.get(core)
-            if event == "start" or job is None:
-                job = Job(uuid.uuid4().hex, "program", state="running",
-                          message=f"GDB flash · core {core}", source="gdb",
+            if event == "erase" or job is None:
+                job = Job(uuid.uuid4().hex, "erase", state="running",
+                          message=f"Preparing erase · core {core}", source="gdb",
                           bytes_total=0, bytes_completed=0)
                 job.events.append({"time": now, "level": "INFO", "logger": "pyocd.gdbserver",
-                                   "message": f"GDB flash started on core {core}"})
+                                   "message": f"GDB erase requested on core {core}"})
                 self._gdb_flash_jobs[core] = job
                 self._jobs[job.id] = job
-            if event == "buffered":
+            if event == "erase":
+                length = details.get("length")
+                job.message = (f"Preparing erase · {int(length) / 1024:.1f} KiB"
+                               if length else "Preparing target erase")
+            elif event == "buffered":
+                job.kind = "program"
                 job.bytes_total = int(details.get("bytes_total", 0))
-                job.message = f"Receiving flash data · {job.bytes_total / 1024:.1f} KiB"
+                job.message = f"Receiving program data · {job.bytes_total / 1024:.1f} KiB"
             elif event == "progress":
                 job.progress = max(0.0, min(1.0, float(details.get("progress", 0.0))))
                 job.bytes_total = int(details.get("bytes_total", job.bytes_total or 0))
                 job.bytes_completed = round((job.bytes_total or 0) * job.progress)
                 job.speed_bps = job.bytes_completed / max(now - job.created_at, 0.001)
-                job.message = f"Flashing via GDB · {job.progress * 100:.0f}%"
+                job.message = f"Erasing & programming · {job.progress * 100:.0f}%"
             elif event in ("complete", "failed"):
                 job.finished_at = now
                 job.state = "completed" if event == "complete" else "failed"
@@ -382,7 +387,8 @@ class WebController:
                     job.progress = 1.0
                     job.bytes_completed = job.bytes_total
                     job.speed_bps = (job.bytes_total or 0) / max(now - job.created_at, 0.001)
-                    job.message = "GDB flash completed"
+                    job.message = ("GDB program completed" if job.bytes_total
+                                   else "GDB erase completed")
                 else:
                     job.message = "GDB flash failed"
                 job.events.append({"time": now, "level": "INFO" if event == "complete" else "ERROR",
@@ -399,7 +405,11 @@ class WebController:
                 "connection_defaults": self.CONNECTION_DEFAULTS,
                 "connected": self._session is not None and self._session.is_open,
                 "gdb": [{"core": c, "port": s.port, "running": s.is_alive(),
-                         "clients": len(s.client_sessions)} for c, s in self._gdb.items()],
+                         "clients": len(s.client_sessions),
+                         "client_addresses": [str(client.remote_address)
+                                              for client in s.client_sessions
+                                              if client.is_socket_connected]}
+                        for c, s in self._gdb.items()],
                 "debugger": {
                     "active": self._debugger is not None and self._debugger.is_alive,
                     "state": self._debugger_state,
