@@ -1129,6 +1129,17 @@ class GDBServer(threading.Thread):
             LOG.debug("Command: Flash done")
             # Only program if we received data.
             if self.flash_loader is not None:
+                def flash_phase(notification):
+                    if notification.event == Target.Event.PRE_FLASH_ERASE:
+                        self._notify_activity("phase", phase="erase")
+                    elif notification.event == Target.Event.PRE_FLASH_PROGRAM:
+                        self._notify_activity("phase", phase="program")
+
+                flash_events = (Target.Event.PRE_FLASH_ERASE, Target.Event.PRE_FLASH_PROGRAM)
+                notifications_supported = (hasattr(self.session, "subscribe")
+                                           and hasattr(self.session, "unsubscribe"))
+                if notifications_supported:
+                    self.session.subscribe(flash_phase, flash_events)
                 try:
                     # Write all buffered flash contents.
                     self.flash_loader.commit()
@@ -1138,6 +1149,8 @@ class GDBServer(threading.Thread):
                                           bytes_total=self._flash_byte_count)
                     raise
                 finally:
+                    if notifications_supported:
+                        self.session.unsubscribe(flash_phase, flash_events)
                     # Set flash loader to None so that on the next flash command a new
                     # object is used.
                     self.flash_loader = None

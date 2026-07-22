@@ -75,6 +75,7 @@ class Job:
     bytes_total: Optional[int] = None
     bytes_completed: Optional[int] = None
     speed_bps: Optional[float] = None
+    phase: Optional[str] = None
 
 
 class JobLogHandler(logging.Handler):
@@ -361,7 +362,7 @@ class WebController:
             if event == "erase" or job is None:
                 job = Job(uuid.uuid4().hex, "erase", state="running",
                           message=f"Preparing erase · core {core}", source="gdb",
-                          bytes_total=0, bytes_completed=0)
+                          bytes_total=0, bytes_completed=0, phase="erase")
                 job.events.append({"time": now, "level": "INFO", "logger": "pyocd.gdbserver",
                                    "message": f"GDB erase requested on core {core}"})
                 self._gdb_flash_jobs[core] = job
@@ -374,12 +375,16 @@ class WebController:
                 job.kind = "program"
                 job.bytes_total = int(details.get("bytes_total", 0))
                 job.message = f"Receiving program data · {job.bytes_total / 1024:.1f} KiB"
+            elif event == "phase":
+                job.phase = str(details.get("phase", "program"))
+                job.message = "Erasing target" if job.phase == "erase" else "Programming target"
             elif event == "progress":
                 job.progress = max(0.0, min(1.0, float(details.get("progress", 0.0))))
                 job.bytes_total = int(details.get("bytes_total", job.bytes_total or 0))
                 job.bytes_completed = round((job.bytes_total or 0) * job.progress)
                 job.speed_bps = job.bytes_completed / max(now - job.created_at, 0.001)
-                job.message = f"Erasing & programming · {job.progress * 100:.0f}%"
+                action = "Erasing" if job.phase == "erase" else "Programming"
+                job.message = f"{action} target · {job.progress * 100:.0f}%"
             elif event in ("complete", "failed"):
                 job.finished_at = now
                 job.state = "completed" if event == "complete" else "failed"
@@ -1065,7 +1070,7 @@ class WebController:
 
     def start_job(self, kind: str, fn: Callable[[
                   Job], None]) -> Dict[str, Any]:
-        job = Job(uuid.uuid4().hex, kind)
+        job = Job(uuid.uuid4().hex, kind, phase=kind if kind in ("erase", "program") else None)
         job.events.append({"time": job.created_at, "level": "INFO",
                            "logger": "pyocd.web", "message": f"{kind.title()} queued"})
         # Reserve exclusive target ownership before returning the accepted job to
@@ -1073,8 +1078,9 @@ class WebController:
         # scheduled and marks the controller busy.
         with self._lock:
             self._require_exclusive()
-            self._state, job.state, job.message = (
-                ConnectionState.BUSY, "running", "Starting")
+            initial_message = "Erasing target" if kind == "erase" else "Preparing programming" \
+                if kind == "program" else "Starting"
+            self._state, job.state, job.message = ConnectionState.BUSY, "running", initial_message
             self._jobs[job.id] = job
 
         def runner() -> None:
@@ -1133,10 +1139,24 @@ class WebController:
                     job.events.append({"time": time.time(), "level": "INFO",
                                        "logger": "pyocd.web",
                                        "message": f"Preparing {artifact['name']} ({index + 1}/{count})"})
+                def flash_phase(notification: Any) -> None:
+                    if notification.event == Target.Event.PRE_FLASH_ERASE:
+                        phase, action = "erase", "Erasing"
+                    elif notification.event == Target.Event.PRE_FLASH_PROGRAM:
+                        phase, action = "program", "Programming"
+                    else:
+                        return
+                    with self._lock:
+                        job.phase = phase
+                        job.message = f"{action} {artifact['name']}"
+
                 def progress(value: float, image_index: int = index) -> None:
-                    total = (image_index + float(value)) / count
-                    job.progress = total
-                    job.message = f"Programming {artifact['name']} · {total * 100:.0f}%"
+                    with self._lock:
+                        job.progress = float(value)
+                        action = "Erasing" if job.phase == "erase" else "Programming"
+                        image_position = f" ({image_index + 1}/{count})" if count > 1 else ""
+                        job.message = (f"{action} {artifact['name']}{image_position} · "
+                                       f"{job.progress * 100:.0f}%")
                 # The first image uses the session's global flashing policy. Following
                 # images must use sector erase so they cannot erase an earlier image.
                 programmer = FileProgrammer(
@@ -1146,7 +1166,15 @@ class WebController:
                 base_address = image.get("base_address")
                 if base_address not in (None, ""):
                     kwargs["base_address"] = int(str(base_address), 0)
-                programmer.program(artifact["path"], **kwargs)
+                flash_events = (Target.Event.PRE_FLASH_ERASE, Target.Event.PRE_FLASH_PROGRAM)
+                notifications_supported = hasattr(session, "subscribe") and hasattr(session, "unsubscribe")
+                if notifications_supported:
+                    session.subscribe(flash_phase, flash_events)
+                try:
+                    programmer.program(artifact["path"], **kwargs)
+                finally:
+                    if notifications_supported:
+                        session.unsubscribe(flash_phase, flash_events)
             # Flash contents are committed at this point. Keep post-action failures
             # from making a successful program operation look partially complete.
             with self._lock:

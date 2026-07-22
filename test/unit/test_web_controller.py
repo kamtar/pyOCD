@@ -431,6 +431,67 @@ def test_post_reset_transfer_error_does_not_fail_completed_program(tmp_path, mon
     assert session.context_state.suppress_disconnect_error is True
 
 
+def test_program_progress_reports_erase_and_program_phases(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    artifact = controller.upload("application.elf", b"elf")
+    phase_messages = []
+
+    class Session:
+        is_open = True
+        gdbservers = {}
+        target = SimpleNamespace(reset_and_halt=lambda reset_type=None: None)
+        close = lambda self: None
+
+        def subscribe(self, callback, events):
+            self.callback = callback
+
+        def unsubscribe(self, callback, events):
+            assert callback == self.callback
+
+    session = Session()
+    controller._session = session
+
+    class Programmer:
+        def __init__(self, session, progress, **kwargs):
+            self.progress = progress
+
+        def program(self, path, **kwargs):
+            for event, value in ((Target.Event.PRE_FLASH_ERASE, 0.4),
+                                 (Target.Event.PRE_FLASH_PROGRAM, 0.6)):
+                session.callback(SimpleNamespace(event=event))
+                self.progress(value)
+                with controller._lock:
+                    phase_messages.append(next(iter(controller._jobs.values())).message)
+
+    monkeypatch.setattr("pyocd.web.controller.FileProgrammer", Programmer)
+    controller.program(artifact["id"], {"post_action": "none"})
+    controller.close()
+
+    assert phase_messages == [
+        "Erasing application.elf · 40%",
+        "Programming application.elf · 60%",
+    ]
+
+
+def test_gdb_progress_reports_current_flash_phase(tmp_path):
+    controller = WebController(str(tmp_path))
+
+    controller._gdb_flash_activity(0, "erase", length=4096)
+    controller._gdb_flash_activity(0, "buffered", bytes_total=4096)
+    controller._gdb_flash_activity(0, "phase", phase="erase")
+    controller._gdb_flash_activity(0, "progress", progress=0.25, bytes_total=4096)
+    erase_job = controller.snapshot()["jobs"][0]
+    controller._gdb_flash_activity(0, "phase", phase="program")
+    controller._gdb_flash_activity(0, "progress", progress=0.5, bytes_total=4096)
+    program_job = controller.snapshot()["jobs"][0]
+    controller.close()
+
+    assert erase_job["phase"] == "erase"
+    assert erase_job["message"] == "Erasing target · 25%"
+    assert program_job["phase"] == "program"
+    assert program_job["message"] == "Programming target · 50%"
+
+
 def test_raspberry_pi_gpio_is_hidden_on_windows(tmp_path, monkeypatch):
     controller = WebController(str(tmp_path))
     monkeypatch.setattr("pyocd.web.controller.sys.platform", "win32")
