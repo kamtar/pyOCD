@@ -380,7 +380,7 @@ def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeyp
     controller.close()
 
     assert calls == [
-        (next(tmp_path.glob("*-application.bin")).name, "chip", 0x08008000),
+        (next(tmp_path.glob("*-application.bin")).name, None, 0x08008000),
         (next(tmp_path.glob("*-bootloader.bin")).name, "sector", 0x08000000),
     ]
     assert target_calls == [

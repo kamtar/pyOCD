@@ -132,6 +132,7 @@ class WebController:
         "reset.post_delay", "reset_type", "resume_on_disconnect",
         "stlink.v3_prescaler", "pack.debug_sequences.enable",
         "pack.debug_sequences.disabled_sequences",
+        "chip_erase", "smart_flash", "fast_program", "keep_unwritten",
     }
 
     def __init__(
@@ -1136,13 +1137,11 @@ class WebController:
                     total = (image_index + float(value)) / count
                     job.progress = total
                     job.message = f"Programming {artifact['name']} · {total * 100:.0f}%"
-                # Only the first image may use chip erase. Following images use sector erase
-                # so they cannot erase the image that was already programmed.
-                erase_mode = options.get("erase", "sector") if index == 0 else "sector"
+                # The first image uses the session's global flashing policy. Following
+                # images must use sector erase so they cannot erase an earlier image.
                 programmer = FileProgrammer(
-                    session, progress=progress, chip_erase=erase_mode,
-                    trust_crc=options.get("trust_crc", False),
-                    keep_unwritten=options.get("keep_unwritten", False))
+                    session, progress=progress,
+                    chip_erase=None if index == 0 else "sector")
                 kwargs = {}
                 base_address = image.get("base_address")
                 if base_address not in (None, ""):
