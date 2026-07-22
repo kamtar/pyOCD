@@ -71,6 +71,10 @@ class Job:
     finished_at: Optional[float] = None
     error: Optional[str] = None
     events: list[Dict[str, Any]] = field(default_factory=list)
+    source: str = "web"
+    bytes_total: Optional[int] = None
+    bytes_completed: Optional[int] = None
+    speed_bps: Optional[float] = None
 
 
 class JobLogHandler(logging.Handler):
@@ -163,6 +167,7 @@ class WebController:
         self._var_objects: set[str] = set()
         self._next_var_object = 0
         self._jobs: Dict[str, Job] = {}
+        self._gdb_flash_jobs: Dict[int, Job] = {}
         self._artifacts: Dict[str, Dict[str, Any]] = {}
         self._attached_elf_artifact: Optional[str] = None
         self._log_handler = WebLogHandler()
@@ -346,6 +351,44 @@ class WebController:
         job = Job(uuid.uuid4().hex, kind, state="completed", progress=1.0,
                   message=message, created_at=now, finished_at=now)
         self._jobs[job.id] = job
+
+    def _gdb_flash_activity(self, core: int, event: str, **details: Any) -> None:
+        """Translate GDB remote-flash activity into dashboard job telemetry."""
+        with self._lock:
+            now = time.time()
+            job = self._gdb_flash_jobs.get(core)
+            if event == "start" or job is None:
+                job = Job(uuid.uuid4().hex, "program", state="running",
+                          message=f"GDB flash · core {core}", source="gdb",
+                          bytes_total=0, bytes_completed=0)
+                job.events.append({"time": now, "level": "INFO", "logger": "pyocd.gdbserver",
+                                   "message": f"GDB flash started on core {core}"})
+                self._gdb_flash_jobs[core] = job
+                self._jobs[job.id] = job
+            if event == "buffered":
+                job.bytes_total = int(details.get("bytes_total", 0))
+                job.message = f"Receiving flash data · {job.bytes_total / 1024:.1f} KiB"
+            elif event == "progress":
+                job.progress = max(0.0, min(1.0, float(details.get("progress", 0.0))))
+                job.bytes_total = int(details.get("bytes_total", job.bytes_total or 0))
+                job.bytes_completed = round((job.bytes_total or 0) * job.progress)
+                job.speed_bps = job.bytes_completed / max(now - job.created_at, 0.001)
+                job.message = f"Flashing via GDB · {job.progress * 100:.0f}%"
+            elif event in ("complete", "failed"):
+                job.finished_at = now
+                job.state = "completed" if event == "complete" else "failed"
+                job.error = details.get("error")
+                if event == "complete":
+                    job.progress = 1.0
+                    job.bytes_completed = job.bytes_total
+                    job.speed_bps = (job.bytes_total or 0) / max(now - job.created_at, 0.001)
+                    job.message = "GDB flash completed"
+                else:
+                    job.message = "GDB flash failed"
+                job.events.append({"time": now, "level": "INFO" if event == "complete" else "ERROR",
+                                   "logger": "pyocd.gdbserver",
+                                   "message": job.message if not job.error else str(job.error)})
+                self._gdb_flash_jobs.pop(core, None)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
@@ -1178,7 +1221,7 @@ class WebController:
             session.options.set("persist", True)
             try:
                 for core in selected_cores:
-                    server = GDBServer(session, core=core)
+                    server = GDBServer(session, core=core, activity_callback=self._gdb_flash_activity)
                     session.gdbservers[core] = server
                     self._gdb[core] = server
                     server.start()

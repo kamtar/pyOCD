@@ -270,7 +270,25 @@ class GDBClientSession(threading.Thread):
 
 
     def stop(self, timeout: float = 1.0) -> None:
+        """Stop the client promptly, including when it is blocked waiting for RSP input."""
         self.shutdown_event.set()
+
+        # Setting shutdown_event alone does not wake a client blocked in
+        # PacketIO.receive(). Close the transport first so a server shutdown
+        # cannot leave a client still polling the target while its Session is
+        # being disconnected (notably with the Raspberry Pi GPIO probe).
+        try:
+            if self._packet_io is not None:
+                self._packet_io.stop()
+        except Exception as e:
+            LOG.debug("Error stopping packet I/O thread: %s", e,
+                      exc_info=self._server.session.log_tracebacks)
+        try:
+            if self._connected_socket is not None:
+                self._connected_socket.close()
+        except Exception as e:
+            LOG.debug("Error closing client socket: %s", e,
+                      exc_info=self._server.session.log_tracebacks)
 
         # Only attempt to join if not in the same thread
         current_thread = threading.current_thread()
@@ -290,9 +308,11 @@ class GDBServer(threading.Thread):
     ## Timer delay for sending the notification that the server is listening.
     START_LISTENING_NOTIFY_DELAY = 0.03 # 30 ms
 
-    def __init__(self, session, core=None):
+    def __init__(self, session, core=None, activity_callback=None):
         super().__init__(daemon=True)
         self.session = session
+        self._activity_callback = activity_callback
+        self._flash_byte_count = 0
         self.board = session.board
         if core is None:
             self.core = 0
@@ -423,6 +443,15 @@ class GDBServer(threading.Thread):
             }
 
         # pylint: enable=invalid-name
+
+    def _notify_activity(self, event, **details):
+        """Report optional UI telemetry without affecting the GDB operation."""
+        if self._activity_callback is None:
+            return
+        try:
+            self._activity_callback(self.core, event, **details)
+        except Exception:
+            LOG.debug("GDB activity callback failed", exc_info=True)
 
     def trace_flush(self) -> None:
         # TraceFlush stub
@@ -1056,6 +1085,8 @@ class GDBServer(threading.Thread):
 
         if ops == b'FlashErase':
             LOG.debug("Command: Flash erase")
+            self._flash_byte_count = 0
+            self._notify_activity("start")
             return self.create_rsp_packet(b"OK")
 
         elif ops == b'FlashWrite':
@@ -1071,10 +1102,17 @@ class GDBServer(threading.Thread):
 
             # Get flash loader if there isn't one already
             if self.flash_loader is None:
-                self.flash_loader = FlashLoader(self.session)
+                self.flash_loader = FlashLoader(
+                    self.session,
+                    progress=lambda value: self._notify_activity(
+                        "progress", progress=value, bytes_total=self._flash_byte_count)
+                    if self._activity_callback is not None else None)
 
             # Add data to flash loader
-            self.flash_loader.add_data(write_addr, unescape(data[idx_begin:len(data) - 3]))
+            flash_data = unescape(data[idx_begin:len(data) - 3])
+            self.flash_loader.add_data(write_addr, flash_data)
+            self._flash_byte_count += len(flash_data)
+            self._notify_activity("buffered", bytes_total=self._flash_byte_count)
 
             return self.create_rsp_packet(b"OK")
 
@@ -1086,10 +1124,18 @@ class GDBServer(threading.Thread):
                 try:
                     # Write all buffered flash contents.
                     self.flash_loader.commit()
+                    self._notify_activity("complete", bytes_total=self._flash_byte_count)
+                except Exception as exc:
+                    self._notify_activity("failed", error=str(exc),
+                                          bytes_total=self._flash_byte_count)
+                    raise
                 finally:
                     # Set flash loader to None so that on the next flash command a new
                     # object is used.
                     self.flash_loader = None
+            elif self._activity_callback is not None:
+                # A vFlashErase/vFlashDone sequence with no writes is valid.
+                self._notify_activity("complete", bytes_total=0)
 
             self.first_run_after_reset_or_flash = True
             if self.thread_provider is not None:
