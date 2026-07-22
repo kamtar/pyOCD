@@ -33,6 +33,7 @@ The `pyocd` command line tool gives you total control over your device with thes
     that provide additional target device support.
 - `commander`: Interactive REPL control and inspection of the MCU.
 - `server`: Share a debug probe with a TCP/IP server.
+- `web`: Run the pyOCD web server for browser-based target control.
 - `reset`: Hardware or software reset of a device.
 - `rtt`: Stream Segger RTT IO with _any_ debug probe.
 - `list`: Show connected devices.
@@ -75,6 +76,7 @@ Requirements
     - WCH-Link (1a86:8011, 2a86:8011 and others)
   - [PE Micro](https://pemicro.com/) Cyclone and Multilink
   - Raspberry Pi Picoprobe
+  - Raspberry Pi GPIO debug probe adapter
   - SEGGER J-Link
   - STLinkV2 or STLinkV3, either on-board or the standalone versions
 
