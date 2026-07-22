@@ -26,12 +26,15 @@
 #define MODE_OUTPUT 1
 #define MAX_SEQUENCE_BITS 4096
 #define MAX_TRANSACTION_WORDS (1024 * 1024)
+#define LOOP_CALIBRATION_ITERATIONS 1000000U
+#define GPIO_CALIBRATION_ITERATIONS 256U
 
 typedef struct {
     PyObject_HEAD
     int fd;
     volatile uint32_t *registers;
     uint64_t half_period_ns;
+    double delay_loops_per_ns;
 } BCMEngine;
 
 typedef struct {
@@ -41,7 +44,6 @@ typedef struct {
 } swd_operation_t;
 
 typedef struct {
-    BCMEngine *engine;
     volatile uint32_t *swclk_set;
     volatile uint32_t *swclk_clear;
     volatile uint32_t *swdio_set;
@@ -57,7 +59,7 @@ typedef struct {
     volatile uint32_t *swdio_dir_clear;
     uint32_t swdio_dir_mask;
     int direction_is_output;
-    uint64_t next_edge_ns;
+    uint32_t delay_iterations;
 } swd_bus_t;
 
 static PyObject *SWDError;
@@ -103,24 +105,29 @@ static inline uint64_t monotonic_ns(void)
     return (uint64_t)timestamp.tv_sec * 1000000000ULL + (uint64_t)timestamp.tv_nsec;
 }
 
+/* This deliberately simple loop is calibrated after gpiomem is mapped. The
+ * volatile counter keeps the compiler from replacing or deleting the loop,
+ * while avoiding a clock syscall on every SWCLK edge. */
+static inline void delay_loop(uint32_t iterations)
+{
+    volatile uint32_t remaining = iterations;
+    while (remaining != 0)
+        --remaining;
+}
+
+static double calibrate_delay_loop(void)
+{
+    uint64_t start = monotonic_ns();
+    delay_loop(LOOP_CALIBRATION_ITERATIONS);
+    uint64_t elapsed = monotonic_ns() - start;
+    return elapsed ? (double)LOOP_CALIBRATION_ITERATIONS / (double)elapsed : 0.0;
+}
+
 static inline void wait_for_edge(swd_bus_t *bus)
 {
-    if (bus->engine->half_period_ns == 0)
-        return;
-    /* Use an absolute schedule so GPIO and barrier overhead is subtracted from
-     * the requested half period instead of being added to it. If software is
-     * already slower than the requested clock, this naturally becomes an
-     * unthrottled path. */
-    bus->next_edge_ns += bus->engine->half_period_ns;
-    uint64_t now = monotonic_ns();
-    /* Do not emit a catch-up burst after descheduling or an interrupt. */
-    if (now > bus->next_edge_ns + bus->engine->half_period_ns) {
-        bus->next_edge_ns = now;
-        return;
-    }
-    while (now < bus->next_edge_ns) {
-        now = monotonic_ns();
-    }
+    /* Explicit fast path for clocks at or above the attainable GPIO rate. */
+    if (bus->delay_iterations != 0)
+        delay_loop(bus->delay_iterations);
 }
 
 static bool init_swd_bus(
@@ -136,7 +143,6 @@ static bool init_swd_bus(
         return false;
 
     memset(bus, 0, sizeof(*bus));
-    bus->engine = self;
     bus->swclk_set = &self->registers[GPSET0 + swclk / 32];
     bus->swclk_clear = &self->registers[GPCLR0 + swclk / 32];
     bus->swdio_set = &self->registers[GPSET0 + swdio / 32];
@@ -155,7 +161,27 @@ static bool init_swd_bus(
         bus->swdio_dir_mask = (uint32_t)1 << ((unsigned int)swdio_dir % 32);
     }
     bus->direction_is_output = -1;
-    bus->next_edge_ns = monotonic_ns();
+
+    /* Measure the cost already paid by each edge (one MMIO write plus the
+     * ordering barrier). Rewriting the high latch is electrically harmless.
+     * Subtracting this cost makes the selected frequency describe the complete
+     * edge period rather than an extra delay added after GPIO access. */
+    uint64_t start = monotonic_ns();
+    for (unsigned int index = 0; index < GPIO_CALIBRATION_ITERATIONS; ++index) {
+        *bus->swclk_set = bus->swclk_mask;
+        gpio_sync();
+    }
+    uint64_t elapsed = monotonic_ns() - start;
+    double edge_overhead_ns = (double)elapsed / GPIO_CALIBRATION_ITERATIONS;
+    double requested_delay_ns = (double)self->half_period_ns - edge_overhead_ns;
+    double delay_iterations = requested_delay_ns * self->delay_loops_per_ns;
+    if (requested_delay_ns <= 0.0 || delay_iterations < 1.0) {
+        bus->delay_iterations = 0;
+    } else if (delay_iterations > UINT32_MAX) {
+        bus->delay_iterations = UINT32_MAX;
+    } else {
+        bus->delay_iterations = (uint32_t)(delay_iterations + 0.5);
+    }
     return true;
 }
 
@@ -260,6 +286,7 @@ static PyObject *BCMEngine_new(
         self->fd = -1;
         self->registers = MAP_FAILED;
         self->half_period_ns = 500;
+        self->delay_loops_per_ns = 0.0;
     }
     return (PyObject *)self;
 }
@@ -290,6 +317,7 @@ static PyObject *BCMEngine_open(BCMEngine *self, PyObject *args)
         errno = saved_errno;
         return PyErr_SetFromErrnoWithFilename(PyExc_OSError, device);
     }
+    self->delay_loops_per_ns = calibrate_delay_loop();
     Py_RETURN_NONE;
 }
 
