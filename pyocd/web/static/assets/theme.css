@@ -21,10 +21,7 @@ aside { background: #091810; }
 .topmcu small { position: absolute; bottom: calc(100% + 2px); left: 0; color: var(--muted); font-size: 9px; letter-spacing: .1em; }
 .topmcu select { min-width: 150px; max-width: 210px; border: 0; padding: 0; background: transparent; color: var(--text); font-weight: 700; }
 .topmcu option { background: #10251a; }
-.connect-top { min-width: 128px; min-height: 34px; border-color: var(--cyan); background: var(--cyan); color: #052522; font-weight: 750; }
-.connect-top.connected { border-color: #34785a; background: #173b29; color: #9ce9bd; }
-.connect-top.error { border-color: #8d3946; background: #351a22; color: #ff9daa; }
-.connect-top.busy { border-color: #765e28; background: #2c2618; color: var(--amber); }
+.connect-top { min-width: 128px; min-height: 34px; font-weight: 750; }
 .topelf { padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; white-space: nowrap; }
 .topelf:hover { border-color: var(--cyan); }
 .topelf input { display: none; }

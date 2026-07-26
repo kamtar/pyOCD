@@ -1,6 +1,6 @@
 {
   "probe": "TWVGEOMNXW4BV",
-  "target_override": "lpc1788",
+  "target_override": "mimxrt1011xxxxx",
   "frequency": 1000000,
   "connect_mode": "halt",
   "dap_protocol": "default",
