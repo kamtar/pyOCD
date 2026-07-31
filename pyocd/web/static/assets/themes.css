@@ -1,19 +1,14 @@
+/* Appearance variants. Green deliberately inherits the existing UI unchanged. */
+:root { --ui-scale: 1; }
+html { background: var(--bg); }
+body { zoom: var(--ui-scale); min-height: calc(100vh / var(--ui-scale)); }
 
-/* ==========================================================================
-   1. GLOBAL APPEARANCE CONTROLS
-   ========================================================================== */
-
-:root {
-  --ui-scale: 1;
-}
-
-html {
-  background: var(--bg);
-}
-
-body {
-  zoom: var(--ui-scale);
-  min-height: calc(100vh / var(--ui-scale));
+/* Status colors are kept with the color schemes so the connect control remains legible. */
+:root[data-theme="green"] {
+  --connect-bg: var(--cyan); --connect-fg: #052522;
+  --connect-connected-bg: #173b29; --connect-connected-fg: #9ce9bd; --connect-connected-border: #34785a;
+  --connect-error-bg: #351a22; --connect-error-fg: #ff9daa; --connect-error-border: #8d3946;
+  --connect-busy-bg: #2c2618; --connect-busy-fg: var(--amber); --connect-busy-border: #765e28;
 }
 
 .appearance-settings {
@@ -71,89 +66,115 @@ body {
 .scale-control output { color: var(--cyan); font: 12px ui-monospace, monospace; text-align: right; }
 .scale-control small { color: var(--muted); font-size: 10px; }
 
+/* Color schemes only define colour. Geometry is selected independently below. */
+:root[data-theme="graphite"],
+:root[data-theme="paper"],
+:root[data-theme="night"] {
+  --shadow: 0 18px 55px #0007;
+}
+:root[data-theme="graphite"] {
+  color-scheme: dark;
+  --bg: #181a1f; --panel: #202228; --panel2: #25282f; --line: #343740;
+  --text: #d8dae0; --muted: #8f939e; --cyan: #5b9bd5; --blue: #79aeda;
+  --red: #d76b72; --amber: #d1a052; --theme-deep: #15171b; --theme-soft: #25282f;
+  --theme-input: #17191e; --theme-line-soft: #2d3038; --theme-accent-bg: #263748;
+  --connect-bg: var(--cyan); --connect-fg: #fff;
+  --connect-connected-bg: var(--theme-accent-bg); --connect-connected-fg: var(--text); --connect-connected-border: var(--cyan);
+  --connect-error-bg: #3b2229; --connect-error-fg: #ffd9dd; --connect-error-border: var(--red);
+  --connect-busy-bg: #3a3118; --connect-busy-fg: #ffe3a3; --connect-busy-border: var(--amber);
+}
+:root[data-theme="paper"] {
+  color-scheme: light;
+  --bg: #e8e5de; --panel: #f4f2ec; --panel2: #ece9e2; --line: #cbc6bb;
+  --text: #282924; --muted: #77776f; --cyan: #a6532b; --blue: #98613f;
+  --red: #a34747; --amber: #9c752f; --theme-deep: #dedbd3; --theme-soft: #ece9e2;
+  --theme-input: #faf8f2; --theme-line-soft: #d8d3c9; --theme-accent-bg: #eee1d6;
+  --shadow: 8px 8px 0 #34342d1f, 0 18px 55px #5b584c2b;
+  --connect-bg: var(--cyan); --connect-fg: #fff;
+  --connect-connected-bg: var(--theme-accent-bg); --connect-connected-fg: var(--text); --connect-connected-border: var(--cyan);
+  --connect-error-bg: #f2dfdf; --connect-error-fg: #7c292f; --connect-error-border: var(--red);
+  --connect-busy-bg: #f1e6ce; --connect-busy-fg: #75551d; --connect-busy-border: var(--amber);
+}
+:root[data-theme="night"] {
+  color-scheme: dark;
+  --bg: #111116; --panel: #1b1b22; --panel2: #202029; --line: #30303a;
+  --text: #dfdee7; --muted: #8b8999; --cyan: #8a82c5; --blue: #aaa3df;
+  --red: #ca6f78; --amber: #c59a5e; --theme-deep: #15151b; --theme-soft: #202029;
+  --theme-input: #131319; --theme-line-soft: #292932; --theme-accent-bg: #2b293e;
+  --connect-bg: var(--cyan); --connect-fg: #fff;
+  --connect-connected-bg: var(--theme-accent-bg); --connect-connected-fg: var(--text); --connect-connected-border: var(--cyan);
+  --connect-error-bg: #38252c; --connect-error-fg: #ffd9dd; --connect-error-border: var(--red);
+  --connect-busy-bg: #352d1b; --connect-busy-fg: #f5d998; --connect-busy-border: var(--amber);
+}
 
-/* ==========================================================================
-   2. SHARED THEME MAPPINGS
-   --------------------------------------------------------------------------
-   These rules describe where semantic theme tokens are used. They should not
-   contain palette-specific hex values.
-   ========================================================================== */
-
-:root[data-theme] body { background: var(--bg); }
-:root[data-theme] header { background: var(--theme-deep); }
-:root[data-theme] aside { background: var(--theme-deep); }
-:root[data-theme] button { background: var(--panel2); }
+:root[data-theme]:not([data-theme="green"]) body { background: var(--bg); }
+:root[data-theme]:not([data-theme="green"]) header { background: var(--theme-deep); }
+:root[data-theme]:not([data-theme="green"]) aside { background: var(--theme-deep); }
+:root[data-theme]:not([data-theme="green"]) button { background: var(--panel2); }
 :root[data-theme] .connect-top { border-color: var(--cyan); background: var(--connect-bg); color: var(--connect-fg); }
 :root[data-theme] .connect-top.connected { border-color: var(--connect-connected-border); background: var(--connect-connected-bg); color: var(--connect-connected-fg); }
 :root[data-theme] .connect-top.error { border-color: var(--connect-error-border); background: var(--connect-error-bg); color: var(--connect-error-fg); }
 :root[data-theme] .connect-top.busy { border-color: var(--connect-busy-border); background: var(--connect-busy-bg); color: var(--connect-busy-fg); }
-:root[data-theme] .primary,
-:root[data-theme] .accent { background: var(--cyan); border-color: var(--cyan); color: #fff; }
+:root[data-theme]:not([data-theme="green"]) .primary,
+:root[data-theme]:not([data-theme="green"]) .accent { background: var(--cyan); border-color: var(--cyan); color: #fff; }
 :root[data-theme="paper"] button { color: var(--text); border-color: var(--line); }
 :root[data-theme="paper"] button:hover { border-color: var(--cyan); }
 :root[data-theme="paper"] .primary,
 :root[data-theme="paper"] .accent,
 :root[data-theme="paper"] .connect-top { color: #fff; }
-:root[data-theme] .card { background: var(--panel); }
-:root[data-theme] .target { background: var(--panel); }
-:root[data-theme] .port,
-:root[data-theme] .form input,
-:root[data-theme] .form select,
-:root[data-theme] .formrow input,
-:root[data-theme] .formrow select,
-:root[data-theme] .inline input,
-:root[data-theme] .dumpgrid input,
-:root[data-theme] .dumpgrid select,
-:root[data-theme] select {
+:root[data-theme]:not([data-theme="green"]) .card { background: var(--panel); }
+:root[data-theme]:not([data-theme="green"]) .target { background: var(--panel); }
+:root[data-theme]:not([data-theme="green"]) .port,
+:root[data-theme]:not([data-theme="green"]) .form input,
+:root[data-theme]:not([data-theme="green"]) .form select,
+:root[data-theme]:not([data-theme="green"]) .formrow input,
+:root[data-theme]:not([data-theme="green"]) .formrow select,
+:root[data-theme]:not([data-theme="green"]) .inline input,
+:root[data-theme]:not([data-theme="green"]) .dumpgrid input,
+:root[data-theme]:not([data-theme="green"]) .dumpgrid select,
+:root[data-theme]:not([data-theme="green"]) select {
   background-color: var(--theme-input) !important;
 }
-:root[data-theme] .hex,
-:root[data-theme] .terminal,
-:root[data-theme] .terminal pre,
-:root[data-theme] .flash-job-log { background: var(--theme-input); }
-:root[data-theme] .terminalbar { background: var(--panel2); }
-:root[data-theme] .terminalbar i { border-radius: 1px; background: var(--line); }
-:root[data-theme] .terminalbar i:nth-child(2),
-:root[data-theme] .terminalbar i:nth-child(3) { background: var(--line); }
-:root[data-theme] .advanced-group,
-:root[data-theme] .optional-group,
-:root[data-theme] .advanced-content .check,
-:root[data-theme] .recovery-state > span { background: var(--theme-input); }
-:root[data-theme] .advanced-group[open] > summary { background: var(--theme-soft); }
-:root[data-theme] .target-options { background: var(--theme-input); }
-:root[data-theme] .target-option:hover,
-:root[data-theme] .target-option:focus { background: var(--theme-soft); }
-:root[data-theme] .debugnotice { border-color: var(--line); background: var(--theme-soft); color: var(--muted); }
-:root[data-theme] .debugnotice.ready { border-color: var(--cyan); background: var(--theme-accent-bg); color: var(--text); }
-:root[data-theme] .reg,
-:root[data-theme] .system-facts > div { background: var(--theme-input); }
-:root[data-theme] .drop:hover,
-:root[data-theme] .drop.drag { background: var(--theme-accent-bg); }
-:root[data-theme] dialog { background: var(--panel); }
-:root[data-theme] dialog::backdrop { background: #08090bb5; backdrop-filter: blur(2px); }
-:root[data-theme] .pack-dialog { background: var(--panel); }
-:root[data-theme] .pack-heading,
-:root[data-theme] .pack-search { background: var(--panel); border-color: var(--line); }
-:root[data-theme] .pack-search input { border-radius: 3px; background: var(--theme-input); color: var(--text); }
-:root[data-theme] .pack-device { border-color: var(--line); }
-:root[data-theme] .waiting-card { border-radius: 4px; background: var(--panel); }
-:root[data-theme] .toast { border-color: var(--line); background: var(--panel); box-shadow: var(--shadow); }
-:root[data-theme] .toast-icon { background: var(--cyan); color: #fff; }
-:root[data-theme] .gdb-activity { border-color: var(--line) !important; background: color-mix(in srgb, var(--panel) 94%, transparent) !important; }
-:root[data-theme] .gdb-activity-head i { background: var(--cyan) !important; box-shadow: none !important; }
-:root[data-theme] #otherUsers { border-radius: 3px !important; border-color: var(--amber) !important; background: var(--theme-soft) !important; color: var(--amber) !important; }
-:root[data-theme] .appearance-settings { border-color: var(--line); }
-:root[data-theme] .theme-choices button,
-:root[data-theme] .style-choices button { background: var(--theme-input); }
-:root[data-theme] .theme-choices button.active { background: var(--theme-soft); }
-:root[data-theme] .style-choices button.active { background: var(--theme-soft); }
-
-
-/* ==========================================================================
-   3. UI STYLE: WORKBENCH
-   --------------------------------------------------------------------------
-   Geometry and typography only. Compatible with every color theme.
-   ========================================================================== */
+:root[data-theme]:not([data-theme="green"]) .hex,
+:root[data-theme]:not([data-theme="green"]) .terminal,
+:root[data-theme]:not([data-theme="green"]) .terminal pre,
+:root[data-theme]:not([data-theme="green"]) .flash-job-log { background: var(--theme-input); }
+:root[data-theme]:not([data-theme="green"]) .terminalbar { background: var(--panel2); }
+:root[data-theme]:not([data-theme="green"]) .terminalbar i { border-radius: 1px; background: var(--line); }
+:root[data-theme]:not([data-theme="green"]) .terminalbar i:nth-child(2),
+:root[data-theme]:not([data-theme="green"]) .terminalbar i:nth-child(3) { background: var(--line); }
+:root[data-theme]:not([data-theme="green"]) .advanced-group,
+:root[data-theme]:not([data-theme="green"]) .optional-group,
+:root[data-theme]:not([data-theme="green"]) .advanced-content .check,
+:root[data-theme]:not([data-theme="green"]) .recovery-state > span { background: var(--theme-input); }
+:root[data-theme]:not([data-theme="green"]) .advanced-group[open] > summary { background: var(--theme-soft); }
+:root[data-theme]:not([data-theme="green"]) .target-options { background: var(--theme-input); }
+:root[data-theme]:not([data-theme="green"]) .target-option:hover,
+:root[data-theme]:not([data-theme="green"]) .target-option:focus { background: var(--theme-soft); }
+:root[data-theme]:not([data-theme="green"]) .debugnotice { border-color: var(--line); background: var(--theme-soft); color: var(--muted); }
+:root[data-theme]:not([data-theme="green"]) .debugnotice.ready { border-color: var(--cyan); background: var(--theme-accent-bg); color: var(--text); }
+:root[data-theme]:not([data-theme="green"]) .reg,
+:root[data-theme]:not([data-theme="green"]) .system-facts > div { background: var(--theme-input); }
+:root[data-theme]:not([data-theme="green"]) .drop:hover,
+:root[data-theme]:not([data-theme="green"]) .drop.drag { background: var(--theme-accent-bg); }
+:root[data-theme]:not([data-theme="green"]) dialog { background: var(--panel); }
+:root[data-theme]:not([data-theme="green"]) dialog::backdrop { background: #08090bb5; backdrop-filter: blur(2px); }
+:root[data-theme]:not([data-theme="green"]) .pack-dialog { background: var(--panel); }
+:root[data-theme]:not([data-theme="green"]) .pack-heading,
+:root[data-theme]:not([data-theme="green"]) .pack-search { background: var(--panel); border-color: var(--line); }
+:root[data-theme]:not([data-theme="green"]) .pack-search input { border-radius: 3px; background: var(--theme-input); color: var(--text); }
+:root[data-theme]:not([data-theme="green"]) .pack-device { border-color: var(--line); }
+:root[data-theme]:not([data-theme="green"]) .waiting-card { border-radius: 4px; background: var(--panel); }
+:root[data-theme]:not([data-theme="green"]) .toast { border-color: var(--line); background: var(--panel); box-shadow: var(--shadow); }
+:root[data-theme]:not([data-theme="green"]) .toast-icon { background: var(--cyan); color: #fff; }
+:root[data-theme]:not([data-theme="green"]) .gdb-activity { border-color: var(--line) !important; background: color-mix(in srgb, var(--panel) 94%, transparent) !important; }
+:root[data-theme]:not([data-theme="green"]) .gdb-activity-head i { background: var(--cyan) !important; box-shadow: none !important; }
+:root[data-theme]:not([data-theme="green"]) #otherUsers { border-radius: 3px !important; border-color: var(--amber) !important; background: var(--theme-soft) !important; color: var(--amber) !important; }
+:root[data-theme]:not([data-theme="green"]) .appearance-settings { border-color: var(--line); }
+:root[data-theme]:not([data-theme="green"]) .theme-choices button,
+:root[data-theme]:not([data-theme="green"]) .style-choices button { background: var(--theme-input); }
+:root[data-theme]:not([data-theme="green"]) .theme-choices button.active { background: var(--theme-soft); }
+:root[data-theme]:not([data-theme="green"]) .style-choices button.active { background: var(--theme-soft); }
 
 /* Workbench style is geometry/typography only and works with every colour scheme. */
 :root[data-ui-style="workbench"] header { height: 68px; backdrop-filter: none; }
@@ -198,191 +219,6 @@ body {
 :root[data-ui-style="workbench"] .theme-choices button,
 :root[data-ui-style="workbench"] .style-choices button { border-radius: 3px; }
 
-
-/* ==========================================================================
-   4. COLOR THEMES
-   ========================================================================== */
-
-
-/* --------------------------------------------------------------------------
-   THEME: GREEN
-   Neutral charcoal surfaces with green reserved for identity and state.
-   -------------------------------------------------------------------------- */
-
-:root[data-theme="green"] {
-  color-scheme: dark;
-
-  /* Neutral charcoal foundation with a restrained green identity. */
-  --bg: #151b19;
-  --panel: #1c2421;
-  --panel2: #232d29;
-  --line: #34423c;
-
-  --text: #e2e9e5;
-  --muted: #94a39c;
-
-  /* Green is now an accent, rather than the colour of every surface. */
-  --cyan: #54ac7e;
-  --blue: #86bda3;
-  --red: #df747d;
-  --amber: #d5a653;
-
-  --theme-deep: #111714;
-  --theme-soft: #26312c;
-  --theme-input: #131916;
-  --theme-line-soft: #2c3833;
-  --theme-accent-bg: #20382d;
-  --shadow: 0 18px 55px #0008;
-
-  --connect-bg: var(--cyan);
-  --connect-fg: #071c12;
-  --connect-connected-bg: #20382d;
-  --connect-connected-fg: #b8f0cf;
-  --connect-connected-border: #55c98d;
-  --connect-error-bg: #3a2228;
-  --connect-error-fg: #ffc2c8;
-  --connect-error-border: #a94f5a;
-  --connect-busy-bg: #352d1c;
-  --connect-busy-fg: #f2d28b;
-  --connect-busy-border: #80652f;
-}
-
-
-/* --------------------------------------------------------------------------
-   THEME: GRAPHITE
-   Neutral dark developer-tool palette with cool blue accents.
-   -------------------------------------------------------------------------- */
-
-:root[data-theme="graphite"] {
-  color-scheme: dark;
-  --bg: #181a1f;
-  --panel: #202228;
-  --panel2: #25282f;
-  --line: #343740;
-  --text: #d8dae0;
-  --muted: #8f939e;
-  --cyan: #5b9bd5;
-  --blue: #79aeda;
-  --red: #d76b72;
-  --amber: #d1a052;
-  --theme-deep: #15171b;
-  --theme-soft: #25282f;
-  --theme-input: #17191e;
-  --theme-line-soft: #2d3038;
-  --theme-accent-bg: #263748;
-  --connect-bg: var(--cyan);
-  --connect-fg: #fff;
-  --connect-connected-bg: var(--theme-accent-bg);
-  --connect-connected-fg: var(--text);
-  --connect-connected-border: var(--cyan);
-  --connect-error-bg: #3b2229;
-  --connect-error-fg: #ffd9dd;
-  --connect-error-border: var(--red);
-  --connect-busy-bg: #3a3118;
-  --connect-busy-fg: #ffe3a3;
-  --connect-busy-border: var(--amber);
-}
-
-
-/* --------------------------------------------------------------------------
-   THEME: NIGHT
-   Near-black violet palette with softer purple accents.
-   -------------------------------------------------------------------------- */
-
-:root[data-theme="night"] {
-  color-scheme: dark;
-
-  --bg: #111116;
-  --panel: #1b1b22;
-  --panel2: #202029;
-  --line: #30303a;
-
-  --text: #dfdee7;
-  --muted: #8b8999;
-
-  --cyan: #8a82c5;
-  --blue: #aaa3df;
-  --red: #ca6f78;
-  --amber: #c59a5e;
-
-  --theme-deep: #15151b;
-  --theme-soft: #202029;
-  --theme-input: #131319;
-  --theme-line-soft: #292932;
-  --theme-accent-bg: #2b293e;
-  --shadow: 0 18px 55px #0008;
-
-  --connect-bg: var(--cyan);
-  --connect-fg: #fff;
-  --connect-connected-bg: var(--theme-accent-bg);
-  --connect-connected-fg: var(--text);
-  --connect-connected-border: var(--cyan);
-  --connect-error-bg: #38252c;
-  --connect-error-fg: #ffd9dd;
-  --connect-error-border: var(--red);
-  --connect-busy-bg: #352d1b;
-  --connect-busy-fg: #f5d998;
-  --connect-busy-border: var(--amber);
-}
-
-/* Keep the fixed bar fully opaque while page content scrolls beneath it. */
-:root[data-theme="night"] header {
-  background-color: var(--theme-deep);
-  background-image: none;
-  opacity: 1;
-  backdrop-filter: none;
-  box-shadow: 0 1px 0 var(--line), 0 8px 24px #0005;
-}
-
-/* Restore separation between the system facts container and each fact cell. */
-:root[data-theme="night"] .system-facts {
-  border: 1px solid var(--line);
-  background: var(--panel2);
-}
-
-:root[data-theme="night"] .system-facts > div {
-  border: 1px solid var(--theme-line-soft);
-  background: var(--theme-input);
-}
-
-
-/* --------------------------------------------------------------------------
-   THEME: PAPER
-   Warm light palette. Variables and all light-theme exceptions stay together.
-   -------------------------------------------------------------------------- */
-
-:root[data-theme="paper"] {
-  color-scheme: light;
-  --bg: #e8e5de;
-  --panel: #f4f2ec;
-  --panel2: #ece9e2;
-  --line: #cbc6bb;
-  --text: #282924;
-  --muted: #77776f;
-  --cyan: #a6532b;
-  --blue: #98613f;
-  --red: #a34747;
-  --amber: #9c752f;
-  --theme-deep: #dedbd3;
-  --theme-soft: #ece9e2;
-  --theme-input: #faf8f2;
-  --theme-line-soft: #d8d3c9;
-  --theme-accent-bg: #eee1d6;
-  --shadow: 8px 8px 0 #34342d1f, 0 18px 55px #5b584c2b;
-  --connect-bg: var(--cyan);
-  --connect-fg: #fff;
-  --connect-connected-bg: var(--theme-accent-bg);
-  --connect-connected-fg: var(--text);
-  --connect-connected-border: var(--cyan);
-  --connect-error-bg: #f2dfdf;
-  --connect-error-fg: #7c292f;
-  --connect-error-border: var(--red);
-  --connect-busy-bg: #f1e6ce;
-  --connect-busy-fg: #75551d;
-  --connect-busy-border: var(--amber);
-}
-
-/* Paper-specific component corrections and contrast handling. */
 :root[data-theme="paper"] body { background-color: var(--bg); color: var(--text); }
 :root[data-theme="paper"] .brand i { border-color: var(--cyan); background: var(--cyan); color: #fff; }
 :root[data-ui-style="workbench"][data-theme="paper"] .target { border-top: 3px solid var(--cyan); box-shadow: none; }
@@ -462,15 +298,9 @@ body {
 :root[data-theme="paper"] aside { border-right-color: var(--line); }
 :root[data-theme="paper"] body > .restart-pyocd { box-shadow: 0 5px 14px #5b584c2b; }
 
-/* Paper-specific narrow-screen sidebar treatment. */
 @media (max-width: 600px) {
   :root[data-theme="paper"] aside { background: #dedbd3ee; }
 }
-
-
-/* ==========================================================================
-   5. GENERAL RESPONSIVE RULES
-   ========================================================================== */
 
 @media (max-width: 700px) {
   .theme-choices, .style-choices { grid-template-columns: 1fr; }
