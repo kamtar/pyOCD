@@ -12,6 +12,17 @@ def test_resolve_addresses_preserves_loopback_bind():
     assert mdns.resolve_addresses("localhost") == [b"\x7f\x00\x00\x01"]
 
 
+def test_wildcard_bind_adds_route_selected_interface(monkeypatch):
+    monkeypatch.setattr(
+        mdns.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (mdns.socket.AF_INET, mdns.socket.SOCK_STREAM, 0, "", ("127.0.0.1", 0))])
+    monkeypatch.setattr(mdns, "_route_address", lambda family: b"\xc0\xa8\x02\x75")
+
+    assert mdns.resolve_addresses("0.0.0.0") == [b"\xc0\xa8\x02\x75"]
+
+
 def test_advertiser_registers_http_service_and_unregisters_on_close(monkeypatch):
     calls = []
 

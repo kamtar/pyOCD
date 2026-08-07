@@ -70,6 +70,8 @@ class SsdpAdvertiser:
             self._socket.bind(("0.0.0.0", SSDP_PORT))
             interface = socket.inet_aton(self._address)
             self._socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, interface)
+            self._socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            self._socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
             self._socket.setsockopt(
                 socket.IPPROTO_IP,
                 socket.IP_ADD_MEMBERSHIP,

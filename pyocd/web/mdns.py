@@ -5,10 +5,34 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
-from typing import List
+from typing import List, Optional
 
 LOG = logging.getLogger(__name__)
 HTTP_SERVICE_TYPE = "_http._tcp.local."
+
+
+def _route_address(family: int) -> Optional[bytes]:
+    """Find the address selected for outbound traffic without sending data."""
+    if family == socket.AF_INET:
+        destinations = [("224.0.0.251", 5353), ("8.8.8.8", 53)]
+    elif family == socket.AF_INET6:
+        destinations = [("ff02::fb", 5353, 0, 0), ("2001:4860:4860::8888", 53, 0, 0)]
+    else:
+        return None
+
+    for destination in destinations:
+        probe = socket.socket(family, socket.SOCK_DGRAM)
+        try:
+            # UDP connect selects a local route but does not transmit a packet.
+            probe.connect(destination)
+            address = ipaddress.ip_address(probe.getsockname()[0])
+            if not address.is_unspecified and not address.is_loopback:
+                return address.packed
+        except OSError:
+            pass
+        finally:
+            probe.close()
+    return None
 
 
 def _local_addresses(family: int) -> List[bytes]:
@@ -25,6 +49,9 @@ def _local_addresses(family: int) -> List[bytes]:
             continue
         if address.packed not in addresses:
             addresses.append(address.packed)
+    route_address = _route_address(family)
+    if route_address is not None and route_address not in addresses:
+        addresses.append(route_address)
     return addresses
 
 
@@ -38,8 +65,10 @@ def resolve_addresses(host: str) -> List[bytes]:
         address = ipaddress.ip_address(host)
         if address.is_unspecified:
             addresses = _local_addresses(socket.AF_INET6 if address.version == 6 else socket.AF_INET)
-            fallback = "::1" if address.version == 6 else "127.0.0.1"
-            return addresses or [ipaddress.ip_address(fallback).packed]
+            if not addresses:
+                raise ValueError(
+                    f"unable to determine a local address for wildcard host '{host}'")
+            return addresses
         return [address.packed]
     except ValueError:
         pass
