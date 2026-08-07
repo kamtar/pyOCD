@@ -17,6 +17,8 @@
 - [User scripts](user_scripts.md)
 - [Remote probe access](remote_probe_access.md)
 - [Configuring logging](configuring_logging.md)
+- [Web control center](web_interface.md)
+- [Web HTTP API](web_api.md)
 - [Target security features](security.md)
 - [Debugging multicore devices](multicore_debug.md)
 - [Semihosting](semihosting.md)

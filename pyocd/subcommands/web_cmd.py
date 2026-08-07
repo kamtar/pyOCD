@@ -23,6 +23,14 @@ class WebSubcommand(SubcommandBase):
             type=int,
             default=8080,
             help="HTTP port (default: 8080).")
+        parser.add_argument(
+            "--mdns",
+            action="store_true",
+            help="Advertise the web interface over mDNS.")
+        parser.add_argument(
+            "--ssdp",
+            action="store_true",
+            help="Advertise the web interface using SSDP/UPnP.")
         parser.add_argument("--auth-token",
                             help="Bearer token for API access (default for non-loopback binds: cutter; loopback is unsecured).")
         parser.add_argument("--auth-token-file",
@@ -57,5 +65,5 @@ class WebSubcommand(SubcommandBase):
         run_webserver(self._args.host, self._args.port, token,
                       self._args.artifact_dir, self._args.unsafe_console,
                       self._args.insecure, self._args.gdb_executable,
-                      self._args.force_rpi)
+                      self._args.force_rpi, self._args.mdns, self._args.ssdp)
         return 0

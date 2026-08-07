@@ -61,7 +61,8 @@ def _effective_auth_token(host: str, token: Optional[str], insecure: bool) -> Op
 def create_application(
         controller: Optional[WebController] = None, token: Optional[str] = None,
         local_only: bool = True,
-        restart_process: Optional[Callable[[], None]] = None):
+        restart_process: Optional[Callable[[], None]] = None,
+        ssdp=None):
     try:
         from aiohttp import web
     except ImportError as exc:
@@ -403,6 +404,14 @@ def create_application(
 
     app.router.add_get("/", index)
     app.router.add_static("/assets", static / "assets", show_index=False)
+    if ssdp is not None:
+        async def ssdp_description(request):
+            return web.Response(
+                body=ssdp.device_description(),
+                content_type="text/xml",
+                charset="utf-8")
+
+        app.router.add_get(ssdp.description_path, ssdp_description)
     app.on_cleanup.append(cleanup)
     return app
 
@@ -410,7 +419,7 @@ def create_application(
 def run_webserver(host: str = "127.0.0.1", port: int = 8080, token: Optional[str] = None,
                   artifact_dir: Optional[str] = None, unsafe_console: bool = False,
                   insecure: bool = False, gdb_executable: Optional[str] = None,
-                  force_rpi: bool = False) -> None:
+                  force_rpi: bool = False, mdns: bool = False, ssdp: bool = False) -> None:
     from aiohttp import web
     effective_token = _effective_auth_token(host, token, insecure)
     controller = WebController(
@@ -419,13 +428,38 @@ def run_webserver(host: str = "127.0.0.1", port: int = 8080, token: Optional[str
         gdb_executable=gdb_executable,
         force_rpi=force_rpi,
         serve_local_only=_is_loopback_host(host))
+    advertiser = None
+    ssdp_advertiser = None
+    try:
+        if mdns or ssdp:
+            from .mdns import MdnsAdvertiser
+            from .ssdp import SsdpAdvertiser
+            if mdns:
+                advertiser = MdnsAdvertiser(controller.interface_name, host, port)
+            if ssdp:
+                try:
+                    ssdp_advertiser = SsdpAdvertiser(controller.interface_name, host, port)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    LOG.warning("SSDP advertisement unavailable: %s", exc)
+    except Exception:
+        if advertiser is not None:
+            advertiser.close()
+        controller.close()
+        raise
     LOG.info("pyOCD web interface listening on http://%s:%d", host, port)
-    web.run_app(
-        create_application(
-            controller,
-            effective_token,
-            local_only=_is_loopback_host(host)),
-        host=host,
-        port=port,
-        print=None,
-        access_log=None)
+    try:
+        web.run_app(
+            create_application(
+                controller,
+                effective_token,
+                local_only=_is_loopback_host(host),
+                ssdp=ssdp_advertiser),
+            host=host,
+            port=port,
+            print=None,
+            access_log=None)
+    finally:
+        if ssdp_advertiser is not None:
+            ssdp_advertiser.close()
+        if advertiser is not None:
+            advertiser.close()

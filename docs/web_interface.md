@@ -18,6 +18,10 @@ the default API credential is `cutter`; set `--auth-token` or `--auth-token-file
 The web process owns the selected probe and any GDB servers it starts. Do not run a separate pyOCD
 process against the same probe.
 
+The same controls are available to scripts and external tools over the
+versioned HTTP API. See the [Web HTTP API](web_api.md) reference for the
+connect, target-action, GDB, state, and event-stream endpoints.
+
 To expose the service on a trusted LAN, replace the default credential:
 
 ```console
@@ -26,6 +30,21 @@ pyocd web --host 0.0.0.0 --auth-token-file /etc/pyocd/web-token
 
 Use HTTPS at a reverse proxy when traffic leaves the device. `--insecure` permits an unauthenticated
 remote bind and is intended only for isolated development networks.
+
+To advertise the HTTP service with mDNS, add `--mdns`. The configured interface name is used as the
+service name, and the bound address and port are advertised:
+
+```console
+pyocd web --host 192.168.1.40 --port 8080 --mdns
+```
+
+On Windows, `--ssdp` additionally publishes the web interface as a UPnP device. The device
+description is served from the same HTTP port, and its presentation URL opens the pyOCD web
+interface. This is a separate option from `--mdns`:
+
+```console
+pyocd web --host 192.168.1.40 --port 8080 --ssdp
+```
 
 Tokenless API clients on loopback or in `--insecure` mode must send `X-pyOCD-CSRF: 1` with POST, PUT,
 PATCH, and DELETE requests. The browser interface adds this header automatically. Bearer-authenticated

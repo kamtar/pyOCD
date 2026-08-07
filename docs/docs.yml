@@ -20,6 +20,8 @@
   - memory_attributes
   - target_family_notes
   - faq
+  - web_interface
+  - web_api
 - title: Reference
   docs:
   - terminology

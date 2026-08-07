@@ -119,6 +119,7 @@ class WebLogHandler(logging.Handler):
 class WebController:
     """Owns the sole active Session and serialises access to the probe."""
 
+    DEFAULT_INTERFACE_NAME = "pyOCD"
     MAX_MEMORY_READ = 1024 * 1024
     # Publish the actual Session defaults so the browser does not maintain a
     # second, potentially divergent set of connection defaults.
@@ -192,6 +193,12 @@ class WebController:
             LOG.warning("unable to clear stale target catalog cache: %s", exc)
         self.unsafe_console = unsafe_console
         self._started_at = time.time()
+
+    @property
+    def interface_name(self) -> str:
+        """Return the configured display name for this web interface."""
+        name = self._profile.get("interface_name")
+        return name.strip() if isinstance(name, str) and name.strip() else self.DEFAULT_INTERFACE_NAME
 
     def _load_profile(self) -> Dict[str, Any]:
         try:

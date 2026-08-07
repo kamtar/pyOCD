@@ -216,6 +216,57 @@ def test_browser_debugger_routes(tmp_path):
     run(scenario())
 
 
+def test_simple_target_control_routes(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        calls = []
+        controller.probes = lambda: {
+            "boards": [{"unique_id": "probe-1", "info": "CMSIS-DAP"}]}
+        controller.targets = lambda query=None: {
+            "targets": [{"name": query or "stm32f103rc"}]}
+        controller.connect = lambda profile: calls.append(("connect", profile)) or {
+            "connected": True, "target": {"name": profile["target_override"]}}
+        controller.target_action = lambda action: calls.append(("target", action)) or {
+            "target": {"state": action}}
+        controller.gdb_start = lambda port, cores: calls.append(("gdb-start", port, cores)) or {
+            "gdb": [{"core": 0, "port": port, "running": True}]}
+        controller.gdb_stop = lambda: calls.append(("gdb-stop",)) or {"gdb": []}
+        controller.disconnect = lambda: calls.append(("disconnect",)) or {
+            "connected": False}
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            probes = await client.get("/api/v1/probes")
+            assert (await probes.json())["boards"][0]["unique_id"] == "probe-1"
+            targets = await client.get("/api/v1/targets?q=stm32")
+            assert (await targets.json())["targets"][0]["name"] == "stm32"
+            connected = await client.post(
+                "/api/v1/session/connect",
+                json={"probe": "probe-1", "target_override": "stm32f103rc"},
+                headers=CSRF)
+            assert (await connected.json())["connected"] is True
+            started = await client.post(
+                "/api/v1/gdb/start", json={"port": 3333, "cores": [0]}, headers=CSRF)
+            assert (await started.json())["gdb"][0]["port"] == 3333
+            action = await client.post("/api/v1/target/halt", json={}, headers=CSRF)
+            assert (await action.json())["target"]["state"] == "halt"
+            stopped = await client.post("/api/v1/gdb/stop", json={}, headers=CSRF)
+            assert (await stopped.json())["gdb"] == []
+            disconnected = await client.post(
+                "/api/v1/session/disconnect", json={}, headers=CSRF)
+            assert (await disconnected.json())["connected"] is False
+            assert calls == [
+                ("connect", {"probe": "probe-1", "target_override": "stm32f103rc"}),
+                ("gdb-start", 3333, [0]),
+                ("target", "halt"),
+                ("gdb-stop",),
+                ("disconnect",),
+            ]
+        finally:
+            await client.close()
+    run(scenario())
+
+
 def test_tokenless_mutations_require_csrf_header(tmp_path):
     async def scenario():
         controller = WebController(str(tmp_path))
