@@ -495,18 +495,31 @@ class WebController:
             obj["boards"] = [probe for probe in obj["boards"]
                              if probe.get("vendor_name") != "Raspberry Pi"
                              or probe.get("product_name") != "GPIO SWD"]
-        # GPIO is intentionally not auto-discovered, so explicitly offer it
-        # when present.
+        # Keep a stable, plugin-qualified selector for the GPIO adapter. The
+        # generic probe listing uses the adapter's local ID ("0"), while the
+        # web API has historically exposed "rpi-gpio:".
         if sys.platform.startswith("linux") and Path("/dev/gpiomem").exists():
-            try:
-                gpio = ConnectHelper.get_all_connected_probes(
-                    blocking=False, unique_id="rpi-gpio:")
-                for probe in gpio:
-                    obj["boards"].append({"unique_id": "rpi-gpio:", "info": "Raspberry Pi GPIO SWD",
-                                          "board_vendor": "Raspberry Pi", "board_name": "GPIO header", "target": "cortex_m",
-                                          "vendor_name": probe.vendor_name, "product_name": probe.product_name})
-            except Exception:
-                pass
+            rpi_boards = [probe for probe in obj["boards"]
+                          if probe.get("vendor_name") == "Raspberry Pi"
+                          and probe.get("product_name") == "GPIO SWD"]
+            if rpi_boards:
+                for probe in rpi_boards:
+                    probe.update({"unique_id": "rpi-gpio:", "info": "Raspberry Pi GPIO SWD",
+                                  "board_vendor": "Raspberry Pi", "board_name": "GPIO header",
+                                  "target": "cortex_m"})
+            else:
+                # Keep the endpoint resilient if a custom probe listing is in
+                # use or the generic listing failed to include this adapter.
+                try:
+                    gpio = ConnectHelper.get_all_connected_probes(
+                        blocking=False, unique_id="rpi-gpio:")
+                    for probe in gpio:
+                        obj["boards"].append({"unique_id": "rpi-gpio:", "info": "Raspberry Pi GPIO SWD",
+                                              "board_vendor": "Raspberry Pi", "board_name": "GPIO header",
+                                              "target": "cortex_m", "vendor_name": probe.vendor_name,
+                                              "product_name": probe.product_name})
+                except Exception:
+                    pass
         if self._force_rpi and not any(
                 probe.get("unique_id") == "rpi-gpio:" for probe in obj["boards"]):
             obj["boards"].append({

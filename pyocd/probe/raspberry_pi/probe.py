@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from time import sleep
 from typing import Callable, Optional, Sequence, Set, Tuple, Union
 
@@ -57,9 +58,10 @@ class RaspberryPiProbe(DebugProbe):
 
     @classmethod
     def get_all_connected_probes(cls, unique_id=None, is_explicit=False) -> Sequence[DebugProbe]:
-        # GPIO is a host resource, not a discoverable peripheral. Only advertise it
-        # when the user explicitly selects this probe type.
-        if not is_explicit:
+        # GPIO is a host resource, so only advertise it automatically when the
+        # host has the default GPIO device. Explicit selection is still allowed
+        # to support custom device paths and to report access errors on open.
+        if not is_explicit and not os.path.exists("/dev/gpiomem"):
             return []
         if unique_id not in (None, "", cls.UNIQUE_ID):
             return []

@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from pyocd.core import exceptions
+from pyocd.core.helpers import ConnectHelper
+from pyocd.probe import aggregator as aggregator_module
 from pyocd.probe.debug_probe import DebugProbe
 from pyocd.probe.raspberry_pi import gpio as gpio_module
 from pyocd.probe.raspberry_pi.gpio import BCMGPIO
@@ -133,10 +135,29 @@ def test_swd_request_encoding():
     assert RaspberryPiProbe._make_request(True, False, 0x0) == 0xA3
 
 
-def test_gpio_probe_is_explicit_only():
-    assert RaspberryPiProbe.get_all_connected_probes(is_explicit=False) == []
+def test_gpio_probe_is_discovered_when_gpio_device_exists(monkeypatch):
+    monkeypatch.setattr(
+        "pyocd.probe.raspberry_pi.probe.os.path.exists",
+        lambda path: path == "/dev/gpiomem")
+    assert len(RaspberryPiProbe.get_all_connected_probes(is_explicit=False)) == 1
     assert len(RaspberryPiProbe.get_all_connected_probes(unique_id="", is_explicit=True)) == 1
     assert RaspberryPiProbe.get_probe_with_id("other", is_explicit=True) is None
+
+
+def test_gpio_probe_is_selected_automatically(monkeypatch):
+    monkeypatch.setattr(
+        "pyocd.probe.raspberry_pi.probe.os.path.exists",
+        lambda path: path == "/dev/gpiomem")
+    monkeypatch.setattr(aggregator_module, "PROBE_CLASSES", {"rpi-gpio": RaspberryPiProbe})
+
+    probe = ConnectHelper.choose_probe(blocking=False, return_first=True)
+
+    assert isinstance(probe, RaspberryPiProbe)
+
+
+def test_gpio_probe_is_not_discovered_without_gpio_device(monkeypatch):
+    monkeypatch.setattr("pyocd.probe.raspberry_pi.probe.os.path.exists", lambda path: False)
+    assert RaspberryPiProbe.get_all_connected_probes(is_explicit=False) == []
 
 
 def test_bcm_gpio_register_operations():

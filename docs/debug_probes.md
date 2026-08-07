@@ -37,7 +37,7 @@ can be installed with pip:
 
 The `rpi-gpio` probe plugin uses the GPIO header of a Broadcom-based Raspberry Pi as an SWD probe. It supports
 Raspberry Pi models through Pi 4, including Pi Zero W and Pi Zero 2 W. Raspberry Pi 5 is not supported. The plugin
-uses `/dev/gpiomem` and must be selected explicitly; it is not included in automatic probe discovery.
+uses `/dev/gpiomem` and is included in automatic probe discovery when that device is available.
 
 The default connections use BCM GPIO numbers, not header pin numbers:
 
