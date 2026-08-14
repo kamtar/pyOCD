@@ -291,6 +291,26 @@ def test_tokenless_mutations_require_csrf_header(tmp_path):
     run(scenario())
 
 
+def test_verify_job_route_accepts_image_plan(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        controller.verify_images = lambda images, options: {
+            "id": "verify-job", "images": images, "options": options}
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/v1/jobs/verify",
+                json={"images": [{"artifact_id": "firmware"}],
+                      "options": {"reset_method": "hardware"}},
+                headers=CSRF)
+            assert response.status == 202
+            assert (await response.json())["id"] == "verify-job"
+        finally:
+            await client.close()
+    run(scenario())
+
+
 def test_cross_origin_requests_are_rejected(tmp_path):
     async def scenario():
         controller = WebController(str(tmp_path))

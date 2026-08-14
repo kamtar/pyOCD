@@ -68,7 +68,7 @@ curl "http://127.0.0.1:8080/api/v1/targets?q=stm32f103"
 curl -X POST http://127.0.0.1:8080/api/v1/session/connect ^
   -H "Content-Type: application/json" ^
   -H "X-pyOCD-CSRF: 1" ^
-  -d "{\"target_override\":\"stm32f103rc\",\"frequency\":1000000,\"connect_mode\":\"halt\"}"
+  -d "{\"target_override\":\"stm32f103rc\",\"frequency\":1000000,\"connect_mode\":\"under-reset\"}"
 
 curl -X POST http://127.0.0.1:8080/api/v1/gdb/start ^
   -H "Content-Type: application/json" ^
@@ -93,7 +93,7 @@ and must be a specific MCU name returned by `/targets`; the generic
   "probe": "0240000031234",
   "target_override": "stm32f103rc",
   "frequency": 1000000,
-  "connect_mode": "halt",
+  "connect_mode": "under-reset",
   "dap_protocol": "default",
   "reset_method": "hardware",
   "gpio": {
@@ -108,7 +108,10 @@ and must be a specific MCU name returned by `/targets`; the generic
 }
 ```
 
-`connect_mode` is one of `halt`, `attach`, `under-reset`, or `pre-reset`.
+`connect_mode` is one of `halt`, `attach`, `under-reset`, or `pre-reset`. The
+web UI and web API default to `under-reset`, which keeps a watchdog-controlled
+target from resetting before pyOCD gains debug control; choose another mode
+explicitly when needed.
 `dap_protocol` is one of `default`, `swd`, or `jtag`. `reset_method` is one of
 `hardware` or `core`. The `gpio` object is intended for the Raspberry Pi GPIO
 adapter. Only safe session options are accepted in `options`; host execution
@@ -166,8 +169,10 @@ The same API also exposes the browser's other operations:
 | `POST` | `/probe/reset` | Pulse the selected probe's nRESET pin without opening a target session. |
 | `POST` | `/target/unlock` | Mass-erase and unlock when the target family supports recovery. |
 | `POST` | `/artifacts` | Upload an ELF, AXF, HEX, or BIN file as multipart form data. |
+| `DELETE` | `/artifacts/{artifact_id}` | Delete an uploaded file. |
 | `POST` | `/elf/attach` | Attach an uploaded ELF/AXF for the browser-owned debugger. |
 | `POST` | `/jobs/program` | Start a programming job; returns `202` with a job record. |
+| `POST` | `/jobs/verify` | Start a flash verification job against the selected uploaded image(s); returns `202` with a job record. |
 | `POST` | `/jobs/erase` | Start an explicit `chip`, `mass`, or `sector` erase job. |
 | `POST` | `/memory/dump` | Stream a binary memory dump. |
 | `GET` | `/stack?core=0` | Read a stack trace from the selected core. |

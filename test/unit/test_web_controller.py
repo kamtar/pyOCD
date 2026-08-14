@@ -1,5 +1,6 @@
 from pathlib import Path
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -20,15 +21,35 @@ def test_upload_hides_server_path(tmp_path):
     controller.close()
 
 
-def test_upload_with_same_name_overwrites_existing_artifact(tmp_path):
+def test_upload_with_same_name_gets_windows_style_suffix(tmp_path):
     controller = WebController(str(tmp_path))
     first = controller.upload("firmware.bin", b"old")
     second = controller.upload("firmware.bin", b"new content")
+    third = controller.upload("firmware.bin", b"newest content")
 
     artifacts = controller.snapshot()["artifacts"]
-    assert second["id"] == first["id"]
-    assert artifacts == [second]
-    assert list(Path(tmp_path).glob("*-firmware.bin"))[0].read_bytes() == b"new content"
+    assert first["name"] == "firmware.bin"
+    assert second["name"] == "firmware_1.bin"
+    assert third["name"] == "firmware_2.bin"
+    assert len(artifacts) == 3
+    assert (Path(tmp_path) / f"{first['id']}-firmware.bin").read_bytes() == b"old"
+    assert (Path(tmp_path) / f"{second['id']}-firmware_1.bin").read_bytes() == b"new content"
+    assert (Path(tmp_path) / f"{third['id']}-firmware_2.bin").read_bytes() == b"newest content"
+    controller.close()
+
+
+def test_delete_artifact_removes_uploaded_file(tmp_path):
+    controller = WebController(str(tmp_path))
+    artifact = controller.upload("firmware.bin", b"content")
+    path = Path(tmp_path) / f"{artifact['id']}-firmware.bin"
+
+    assert controller.delete_artifact(artifact["id"]) == {
+        "deleted": True, "artifact": artifact["id"], "name": "firmware.bin"}
+    assert not path.exists()
+    assert controller.snapshot()["artifacts"] == []
+    with pytest.raises(WebError, match="Uploaded file not found") as error:
+        controller.delete_artifact(artifact["id"])
+    assert error.value.code == "artifact_not_found"
     controller.close()
 
 
@@ -279,12 +300,12 @@ def test_connection_profile_is_persisted_and_reloaded(tmp_path):
     restored.close()
 
 
-def test_connection_defaults_come_from_core_options(tmp_path):
+def test_web_connection_defaults_use_watchdog_safe_connect_mode(tmp_path):
     controller = WebController(str(tmp_path), config_path=str(tmp_path / "web.json"))
 
     assert controller.snapshot()["connection_defaults"] == {
         "frequency": 1_000_000,
-        "connect_mode": "halt",
+        "connect_mode": "under-reset",
         "dap_protocol": "default",
     }
     controller.close()
@@ -387,6 +408,34 @@ def test_two_image_plan_uses_offsets_and_preserves_first_image(tmp_path, monkeyp
         ("reset-halt", Target.ResetType.HARDWARE),
         ("reset", Target.ResetType.HARDWARE),
     ]
+
+
+@pytest.mark.parametrize("target_data, expected_state", [(b"app", "completed"), (b"bad", "failed")])
+def test_verify_image_reads_flash_and_detects_mismatch(tmp_path, target_data, expected_state):
+    controller = WebController(str(tmp_path))
+    artifact = controller.upload("application.bin", b"app")
+    start = 0x08000000
+    region = SimpleNamespace(
+        start=start, end=start + len(target_data) - 1,
+        is_flash=True, is_powered_on_boot=True, flash=None)
+    memory_map = SimpleNamespace(
+        get_boot_memory=lambda: region,
+        get_region_for_address=lambda address: region)
+    target = SimpleNamespace(
+        memory_map=memory_map,
+        read_memory_block8=lambda address, length: list(
+            target_data[address - start:address - start + length]))
+    controller._session = SimpleNamespace(
+        is_open=True, target=target, gdbservers={}, close=lambda: None)
+
+    accepted = controller.verify(artifact["id"], {"base_address": hex(start)})
+    controller.close()
+    job = next(item for item in controller.snapshot()["jobs"]
+               if item["id"] == accepted["id"])
+
+    assert job["state"] == expected_state
+    if expected_state == "failed":
+        assert "Flash verification failed" in job["error"]
 
 
 def test_post_reset_transfer_error_does_not_fail_completed_program(tmp_path, monkeypatch):
@@ -656,6 +705,77 @@ def test_connect_defaults_to_first_available_probe(tmp_path, monkeypatch):
 
     assert error.value.code == "probe_not_found"
     assert selected == [{"blocking": False, "return_first": True, "unique_id": None}]
+    controller.close()
+
+
+def test_connect_uses_watchdog_safe_mode_when_omitted(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    selected = []
+    options_seen = {}
+
+    monkeypatch.setattr(
+        "pyocd.web.controller.ConnectHelper.choose_probe",
+        lambda **kwargs: selected.append(kwargs) or object())
+
+    class FakeSession:
+        def __init__(self, probe, options):
+            options_seen.update(options)
+
+        def open(self):
+            raise RuntimeError("stop after inspecting options")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("pyocd.web.controller.Session", FakeSession)
+
+    with pytest.raises(RuntimeError, match="stop after inspecting options"):
+        controller.connect({"target_override": "stm32f103rc"})
+
+    assert options_seen["connect_mode"] == "under-reset"
+    assert selected == [{"blocking": False, "return_first": True, "unique_id": None}]
+    controller.close()
+
+
+def test_connect_resets_and_halts_kinetis_under_reset(tmp_path, monkeypatch):
+    controller = WebController(str(tmp_path))
+    calls = []
+
+    class FakeKinetis:
+        pass
+
+    class FakeTarget(FakeKinetis):
+        def is_locked(self):
+            return False
+
+        def reset_and_halt(self):
+            calls.append("reset_and_halt")
+
+    class FakeSession:
+        is_open = True
+
+        def __init__(self, probe, options):
+            self.target = FakeTarget()
+            self.options = SimpleNamespace(get=lambda key: options.get(key))
+
+        def open(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(web_controller, "Kinetis", FakeKinetis)
+    monkeypatch.setattr(
+        "pyocd.web.controller.ConnectHelper.choose_probe", lambda **kwargs: object())
+    monkeypatch.setattr("pyocd.web.controller.Session", FakeSession)
+    monkeypatch.setattr(
+        "pyocd.web.controller.CommandExecutionContext",
+        lambda **kwargs: SimpleNamespace(attach_session=lambda session: None))
+    monkeypatch.setattr(controller, "snapshot", lambda: {"connected": True})
+
+    controller.connect({"probe": "probe", "target_override": "mkl17z256vft4"})
+
+    assert calls == ["reset_and_halt"]
     controller.close()
 
 

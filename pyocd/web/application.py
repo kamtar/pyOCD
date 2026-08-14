@@ -132,8 +132,18 @@ def create_application(
                 status=403)
         return await handler(request)
 
+    @web.middleware
+    async def no_cache_frontend(request, handler):
+        response = await handler(request)
+        if request.path == "/" or request.path == "/index.html" or request.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
     app = web.Application(
         middlewares=[
+            no_cache_frontend,
             errors,
             browser_security,
             authenticate],
@@ -270,12 +280,24 @@ def create_application(
             chunks.append(chunk)
         return web.json_response(await asyncio.to_thread(ctrl.upload, part.filename, b"".join(chunks)), status=201)
 
+    async def delete_artifact(request):
+        return web.json_response(await asyncio.to_thread(
+            ctrl.delete_artifact, request.match_info["artifact_id"]))
+
     async def program(request):
         data = await body(request)
         if data.get("images") is not None:
             job = ctrl.program_images(data["images"], data.get("options") or {})
         else:
             job = ctrl.program(data["artifact_id"], data.get("options") or {})
+        return web.json_response(job, status=202)
+
+    async def verify(request):
+        data = await body(request)
+        if data.get("images") is not None:
+            job = ctrl.verify_images(data["images"], data.get("options") or {})
+        else:
+            job = ctrl.verify(data["artifact_id"], data.get("options") or {})
         return web.json_response(job, status=202)
 
     async def erase(request):
@@ -376,9 +398,11 @@ def create_application(
         web.post("/api/v1/memory/read",
                  memory), web.post("/api/v1/memory/dump", dump),
         web.post("/api/v1/artifacts",
-                 upload), web.post("/api/v1/elf/attach", attach_elf),
+                 upload), web.delete("/api/v1/artifacts/{artifact_id}",
+                                     delete_artifact), web.post("/api/v1/elf/attach", attach_elf),
         web.post("/api/v1/jobs/program",
-                 program), web.post("/api/v1/jobs/erase", erase),
+                 program), web.post("/api/v1/jobs/verify", verify),
+        web.post("/api/v1/jobs/erase", erase),
         web.get("/api/v1/stack", stack), web.post("/api/v1/gdb/start",
                                                   gdb_start), web.post("/api/v1/gdb/stop", gdb_stop),
         web.post("/api/v1/debug/start", debug_start),

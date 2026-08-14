@@ -25,18 +25,22 @@ from urllib import error as urlerror
 from urllib import request as urlrequest
 from typing import Any, Callable, Dict, Optional
 
+from elftools.elf.elffile import ELFFile
+from intelhex import IntelHex
+
 from .. import __version__
 from ..commands.execution_context import CommandExecutionContext
-from ..core.exceptions import TransferError
+from ..core.exceptions import FlashFailure, TransferError
 from ..core.helpers import ConnectHelper
 from ..core.options import OPTIONS_INFO
 from ..core.session import Session
 from ..core.target import Target
 from ..flash.eraser import FlashEraser
-from ..flash.file_programmer import FileProgrammer
+from ..flash.file_programmer import FileProgrammer, ranges
 from ..gdbserver import GDBServer
 from ..tools.lists import ListGenerator
 from ..target.pack import pack_target
+from ..target.family.target_kinetis import Kinetis
 from ..target import TARGET
 from .gdb_mi import GdbMiClient, GdbMiError, MiRecord, quote_mi
 
@@ -121,11 +125,14 @@ class WebController:
 
     DEFAULT_INTERFACE_NAME = "pyOCD"
     MAX_MEMORY_READ = 1024 * 1024
-    # Publish the actual Session defaults so the browser does not maintain a
-    # second, potentially divergent set of connection defaults.
+    # The web UI defaults to under-reset so a target watchdog cannot reset the
+    # core before pyOCD gains debug control. Explicit profile/API values still
+    # override this default.
+    WEB_DEFAULT_CONNECT_MODE = "under-reset"
     CONNECTION_DEFAULTS = {
-        name: OPTIONS_INFO[name].default
-        for name in ("frequency", "connect_mode", "dap_protocol")
+        "frequency": OPTIONS_INFO["frequency"].default,
+        "connect_mode": WEB_DEFAULT_CONNECT_MODE,
+        "dap_protocol": OPTIONS_INFO["dap_protocol"].default,
     }
     SAFE_SESSION_OPTIONS = {
         "auto_unlock", "cmsis_dap.deferred_transfers", "cmsis_dap.limit_packets",
@@ -768,6 +775,8 @@ class WebController:
                 for key in ("target_override", "frequency", "connect_mode", "dap_protocol"):
                     if profile.get(key) is not None:
                         options[key] = profile[key]
+                if "connect_mode" not in options:
+                    options["connect_mode"] = self.WEB_DEFAULT_CONNECT_MODE
                 reset_method = profile.get("reset_method", "hardware")
                 if reset_method not in ("hardware", "core"):
                     raise WebError("invalid_reset_method", "Reset method must be hardware or core")
@@ -781,6 +790,13 @@ class WebController:
                         options["rpi_gpio." + key] = gpio[key]
                 session = Session(probe, options=options)
                 session.open()
+                # Kinetis MDM-AP halting is not persistent on parts whose
+                # watchdog continues across the initial debug handoff. Do
+                # an explicit reset-and-halt before exposing the session to
+                # the web UI or flash jobs.
+                if (options.get("connect_mode") == "under-reset"
+                        and isinstance(session.target, Kinetis)):
+                    session.target.reset_and_halt()
                 try:
                     self._target_locked = session.target.is_locked()
                 except Exception:
@@ -1031,19 +1047,40 @@ class WebController:
     def upload(self, name: str, content: bytes) -> Dict[str, Any]:
         safe_name = Path(name).name or "firmware.bin"
         with self._lock:
-            existing = next((artifact for artifact in self._artifacts.values()
-                             if artifact["name"] == safe_name), None)
-            artifact_id = existing["id"] if existing else uuid.uuid4().hex
-            path = (Path(existing["path"]) if existing else
-                    self._artifact_dir / f"{artifact_id}-{safe_name}")
+            used_names = {artifact["name"] for artifact in self._artifacts.values()}
+            candidate = safe_name
+            stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
+            index = 1
+            while candidate in used_names:
+                candidate = f"{stem}_{index}{suffix}"
+                index += 1
+            artifact_id = uuid.uuid4().hex
+            path = self._artifact_dir / f"{artifact_id}-{candidate}"
             path.write_bytes(content)
             item = {
                 "id": artifact_id,
-                "name": safe_name,
+                "name": candidate,
                 "size": len(content),
                 "uploaded_at": time.time()}
             self._artifacts[artifact_id] = {**item, "path": str(path)}
             return item
+
+    def delete_artifact(self, artifact_id: str) -> Dict[str, Any]:
+        with self._lock:
+            artifact = self._artifacts.pop(artifact_id, None)
+            if not artifact:
+                raise WebError("artifact_not_found", "Uploaded file not found", 404)
+            if self._attached_elf_artifact == artifact_id:
+                if self._session and self._session.is_open:
+                    self._session.target.elf = None
+                self._attached_elf_artifact = None
+            try:
+                Path(artifact["path"]).unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger(__name__).warning(
+                    "Unable to remove uploaded file %s", artifact["path"])
+            return {"deleted": True, "artifact": artifact_id,
+                    "name": artifact["name"]}
 
     def attach_elf(self, artifact_id: str) -> Dict[str, Any]:
         with self._lock:
@@ -1090,7 +1127,7 @@ class WebController:
 
     def start_job(self, kind: str, fn: Callable[[
                   Job], None]) -> Dict[str, Any]:
-        job = Job(uuid.uuid4().hex, kind, phase=kind if kind in ("erase", "program") else None)
+        job = Job(uuid.uuid4().hex, kind, phase=kind if kind in ("erase", "program", "verify") else None)
         job.events.append({"time": job.created_at, "level": "INFO",
                            "logger": "pyocd.web", "message": f"{kind.title()} queued"})
         # Reserve exclusive target ownership before returning the accepted job to
@@ -1098,8 +1135,9 @@ class WebController:
         # scheduled and marks the controller busy.
         with self._lock:
             self._require_exclusive()
-            initial_message = "Erasing target" if kind == "erase" else "Preparing programming" \
-                if kind == "program" else "Starting"
+            initial_message = ("Erasing target" if kind == "erase" else
+                               "Preparing programming" if kind == "program" else
+                               "Preparing flash verification" if kind == "verify" else "Starting")
             self._state, job.state, job.message = ConnectionState.BUSY, "running", initial_message
             self._jobs[job.id] = job
 
@@ -1235,6 +1273,120 @@ class WebController:
                             self._session_metadata = None
                             self._target_locked = None
         return self.start_job("program", work)
+
+    def _artifact_chunks(self, artifact: Dict[str, Any], session: Session,
+                         base_address: Any):
+        file_format = Path(artifact["name"]).suffix.lower().lstrip(".")
+        if file_format == "bin":
+            if base_address in (None, ""):
+                boot_memory = session.target.memory_map.get_boot_memory()
+                if boot_memory is None:
+                    raise WebError("no_boot_memory", "No boot memory is defined for this target")
+                address = boot_memory.start
+            else:
+                address = int(str(base_address), 0)
+            with open(artifact["path"], "rb") as file_obj:
+                data = file_obj.read()
+            if data:
+                yield address, data
+            return
+        if file_format == "hex":
+            with open(artifact["path"], "r", encoding="ascii") as file_obj:
+                hexfile = IntelHex(file_obj)
+            addresses = sorted(hexfile.addresses())
+            for start, end in ranges(addresses):
+                yield start, bytes(hexfile.tobinarray(start=start, size=end - start + 1))
+            return
+        if file_format in ("elf", "axf"):
+            with open(artifact["path"], "rb") as file_obj:
+                elf = ELFFile(file_obj)
+                for segment in elf.iter_segments():
+                    if segment.header.p_type == "PT_LOAD" and segment.header.p_filesz:
+                        address, data = FileProgrammer._get_elf_segment_data(elf, segment)
+                        if data:
+                            yield address, bytes(data)
+            return
+        raise WebError("unsupported_artifact", "Only ELF, AXF, HEX, or BIN files can be verified")
+
+    def verify(self, artifact_id: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        return self.verify_images([{"artifact_id": artifact_id,
+                                    "base_address": options.get("base_address")}], options)
+
+    def verify_images(self, images: list[Dict[str, Any]],
+                      options: Dict[str, Any]) -> Dict[str, Any]:
+        if not images or len(images) > 2:
+            raise WebError("invalid_images", "Select one or two firmware images")
+        artifacts = []
+        for image in images:
+            artifact = self._artifacts.get(image.get("artifact_id"))
+            if not artifact:
+                raise WebError("artifact_not_found", "Uploaded file not found", 404)
+            artifacts.append((artifact, image))
+
+        def work(job: Job) -> None:
+            session = self._require_session()
+            verification_chunks = []
+            for artifact, image in artifacts:
+                for address, data in self._artifact_chunks(
+                        artifact, session, image.get("base_address")):
+                    offset = 0
+                    while offset < len(data):
+                        region = session.target.memory_map.get_region_for_address(address + offset)
+                        if region is None or not region.is_flash:
+                            raise WebError(
+                                "verify_not_flash",
+                                f"Image data at 0x{address + offset:08x} is not in flash")
+                        chunk_size = min(len(data) - offset,
+                                         region.end - address - offset + 1)
+                        verification_chunks.append(
+                            (artifact, address + offset, data[offset:offset + chunk_size], region))
+                        offset += chunk_size
+            total = sum(len(data) for _, _, data, _ in verification_chunks)
+            if not total:
+                raise WebError("empty_artifact", "The selected image contains no data to verify")
+
+            completed = 0
+            active_flash = None
+            try:
+                for artifact, address, data, region in verification_chunks:
+                    flash = (region.flash if not region.is_powered_on_boot else None)
+                    if flash is not active_flash:
+                        if active_flash is not None:
+                            active_flash.cleanup()
+                        active_flash = flash
+                        if flash is not None:
+                            try:
+                                flash.init(flash.Operation.VERIFY)
+                            except FlashFailure:
+                                flash.init(flash.Operation.ERASE)
+                    with self._lock:
+                        job.message = f"Verifying {artifact['name']}"
+                    for offset in range(0, len(data), 32 * 1024):
+                        expected = data[offset:offset + 32 * 1024]
+                        actual = bytes(session.target.read_memory_block8(
+                            address + offset, len(expected)))
+                        if len(actual) != len(expected):
+                            raise RuntimeError(
+                                f"Flash verification read at 0x{address + offset:08x} returned "
+                                f"{len(actual)} bytes, expected {len(expected)}")
+                        for index, (actual_byte, expected_byte) in enumerate(zip(actual, expected)):
+                            if actual_byte != expected_byte:
+                                raise RuntimeError(
+                                    f"Flash verification failed at 0x{address + offset + index:08x}: "
+                                    f"target 0x{actual_byte:02x} != image 0x{expected_byte:02x}")
+                        completed += len(expected)
+                        with self._lock:
+                            job.progress = completed / total
+                            job.message = (f"Verifying {artifact['name']} · "
+                                           f"{job.progress * 100:.0f}%")
+            finally:
+                if active_flash is not None:
+                    active_flash.cleanup()
+            with self._lock:
+                job.progress = 1.0
+                job.message = "Flash verification complete"
+
+        return self.start_job("verify", work)
 
     def erase(self, mode: str, addresses: Any = None) -> Dict[str, Any]:
         modes = {
