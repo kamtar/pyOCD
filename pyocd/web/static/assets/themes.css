@@ -305,3 +305,85 @@ body { zoom: var(--ui-scale); min-height: calc(100vh / var(--ui-scale)); }
 @media (max-width: 700px) {
   .theme-choices, .style-choices { grid-template-columns: 1fr; }
 }
+
+/* Keep nested grids from contributing an intrinsic width larger than the viewport. */
+.shell {
+  grid-template-columns: 225px minmax(0, 1fr);
+}
+
+main,
+.heading > *,
+.hero,
+.cols,
+.debugtop,
+.debugbottom,
+.card,
+.form,
+.optional-group,
+.drop,
+.dumpgrid,
+.dumpgrid label {
+  min-width: 0;
+}
+
+.hero,
+.cols,
+.debugtop,
+.debugbottom {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.formrow {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dumpgrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+}
+
+.dumpgrid input,
+.dumpgrid select,
+.form input,
+.form select,
+.formrow input,
+.formrow select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+@media (max-width: 1050px) {
+  .dumpgrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1000px) {
+  .cols.setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .hero,
+  .cols,
+  .debugtop,
+  .debugbottom {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .hero,
+  .cols,
+  .cols.setup,
+  .debugtop,
+  .debugbottom,
+  .formrow,
+  .dumpgrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

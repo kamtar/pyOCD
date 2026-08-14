@@ -206,6 +206,41 @@ def test_busy_snapshot_uses_cached_metadata_without_probe_properties(tmp_path):
     controller.close()
 
 
+@pytest.mark.parametrize("failed_read", ["get_state", "is_locked"])
+def test_snapshot_reconciles_lost_debug_link(tmp_path, failed_read):
+    controller = WebController(str(tmp_path))
+    closed = []
+
+    def fail_if_selected(name, value):
+        if failed_read == name:
+            raise TransferError("No ACK")
+        return value
+
+    target = SimpleNamespace(
+        get_state=lambda: fail_if_selected("get_state", Target.State.HALTED),
+        is_locked=lambda: fail_if_selected("is_locked", False),
+        vendor="Vendor", part_number="Part", cores={0: object()},
+        selected_core=SimpleNamespace(core_number=0), memory_map=[])
+    probe = SimpleNamespace(
+        unique_id="probe", vendor_name="Vendor", product_name="Probe",
+        wire_protocol=None)
+    controller._session = SimpleNamespace(
+        is_open=True, target=target, probe=probe,
+        board=SimpleNamespace(target_type="part"),
+        options=SimpleNamespace(get=lambda key: 1000000),
+        close=lambda: closed.append(True))
+    controller._state = web_controller.ConnectionState.CONNECTED
+
+    snapshot = controller.snapshot()
+
+    assert snapshot["state"] == "disconnected"
+    assert snapshot["connected"] is False
+    assert snapshot["error"] == "No ACK"
+    assert controller._session is None
+    assert closed == [True]
+    controller.close()
+
+
 def test_stack_transfer_fault_returns_partial_diagnostic(tmp_path):
     controller = WebController(str(tmp_path))
     core = SimpleNamespace(

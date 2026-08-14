@@ -30,7 +30,7 @@ from intelhex import IntelHex
 
 from .. import __version__
 from ..commands.execution_context import CommandExecutionContext
-from ..core.exceptions import FlashFailure, TransferError
+from ..core.exceptions import FlashFailure, ProbeError, TransferError
 from ..core.helpers import ConnectHelper
 from ..core.options import OPTIONS_INFO
 from ..core.session import Session
@@ -464,16 +464,34 @@ class WebController:
                 else:
                     try:
                         target_state = target.get_state().name.lower()
+                    except (ProbeError, TransferError) as exc:
+                        self._mark_link_lost_locked(exc)
+                        result.update({
+                            "state": ConnectionState.DISCONNECTED.value,
+                            "connected": False,
+                            "error": str(exc),
+                        })
+                        return result
                     except Exception:
                         target_state = "unknown"
+                try:
+                    locked = (self._target_locked
+                               if self._gdb or self._state == ConnectionState.BUSY
+                               else target.is_locked())
+                except (ProbeError, TransferError) as exc:
+                    self._mark_link_lost_locked(exc)
+                    result.update({
+                        "state": ConnectionState.DISCONNECTED.value,
+                        "connected": False,
+                        "error": str(exc),
+                    })
+                    return result
                 result["target"] = {
                     "name": self._session.board.target_type,
                     "vendor": getattr(target, "vendor", None),
                     "part_number": getattr(target, "part_number", None),
                     "state": target_state,
-                    "locked": (self._target_locked
-                               if self._gdb or self._state == ConnectionState.BUSY
-                               else target.is_locked()),
+                    "locked": locked,
                     "cores": sorted(target.cores.keys()),
                     "selected_core": getattr(target.selected_core, "core_number", 0),
                     "memory_map": [self._region_dict(r) for r in target.memory_map],
@@ -577,6 +595,21 @@ class WebController:
                     except OSError:
                         pass
             return result
+
+    def _mark_link_lost_locked(self, error: BaseException) -> None:
+        """Transition a live session to disconnected after a failed link poll."""
+        session = self._session
+        self._session, self._console = None, None
+        self._session_metadata = None
+        self._target_locked = None
+        self._state = ConnectionState.DISCONNECTED
+        self._error = str(error)
+        if session is not None:
+            try:
+                session.close()
+            except Exception as close_error:
+                logging.getLogger(__name__).debug(
+                    "Ignoring session close error after lost debug link: %s", close_error)
 
     def _invalidate_target_catalog(self) -> None:
         """Discard target metadata after installed Pack contents change."""
@@ -1152,6 +1185,8 @@ class WebController:
                                        "logger": "pyocd.web", "message": f"{kind.title()} completed"})
             except Exception as exc:
                 with self._lock:
+                    if isinstance(exc, (ProbeError, TransferError)):
+                        self._mark_link_lost_locked(exc)
                     job.state, job.error, job.message = "failed", str(exc), "Failed"
                     job.events.append({"time": time.time(), "level": "ERROR",
                                        "logger": "pyocd.web", "message": str(exc)})

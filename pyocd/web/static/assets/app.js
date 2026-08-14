@@ -141,4 +141,88 @@ connectionProfile=function(){const profile=connectionProfileWithoutFlashing();Ob
 const loadConfigWithoutFlashing=loadConfig;
 loadConfig=async function(){await loadConfigWithoutFlashing();const options=savedProfile.options||{};$('#eraseMode').value=options.chip_erase??'sector';$('#smartFlash').checked=options.smart_flash??true;$('#trustCrc').checked=options.fast_program??true;$('#keepUnwritten').checked=options.keep_unwritten??false};
 queueMicrotask(()=>{$('#programBtn').onclick=()=>submitPlan('program');const verify=$('#verifyBtn');if(verify)verify.onclick=()=>submitPlan('verify')});
+/* Keep background state polling from masking a lost debug link or stacking errors. */
+let refreshBusy=false,lastRefreshError='',lastConnectionError='';
+const baseToast=toast;
+toast=function(message,error=false){
+  const key=(error?'error:':'info:')+message,host=$('#toast');
+  if([...host.children].some(item=>item.dataset.key===key))return;
+  baseToast(message,error);
+  const item=[...host.children].find(candidate=>candidate.dataset.key===key);
+  if(!item)return;
+  let timer;
+  const dismiss=()=>{clearTimeout(timer);item.remove()};
+  const schedule=()=>{clearTimeout(timer);timer=setTimeout(dismiss,error?12000:10000)};
+  item.onmouseenter=()=>clearTimeout(timer);
+  item.onmouseleave=schedule;
+  item.querySelector('.toast-close')?.addEventListener('click',()=>clearTimeout(timer));
+  schedule();
+};
+
+const renderWithConnectionError=render;
+render=function(snapshot){
+  const message=snapshot.error||'';
+  if(message&&message!==lastConnectionError)toast(message,true);
+  if(!message)lastConnectionError='';
+  else lastConnectionError=message;
+  renderWithConnectionError(snapshot);
+};
+
+renderProgress=function(jobs){
+  const j=jobs.filter(x=>x.kind==='program'||x.kind==='erase'||x.kind==='verify')
+    .sort((a,b)=>(b.created_at||0)-(a.created_at||0))[0];
+  const progress=$('#progress'),status=$('#flashStatus');
+  if(!j){progress.className='progress hidden';status.hidden=true;renderFlashDetails(jobs);return}
+  const label=j.kind==='erase'?'Erase':j.kind==='verify'?'Verify':'Programming',completed=j.state==='completed',failed=j.state==='failed',terminal=completed||failed;
+  progress.className='progress'+(completed?' status-success':failed?' status-failure':'');
+  progress.classList.toggle('hidden',false);
+  $('#progressLabel').textContent=terminal?(completed?`${label} complete`:`${label} failed`):j.message;
+  $('#progressValue').textContent=(completed?100:Math.round(j.progress*100))+'%';
+  $('#progress progress').value=completed?1:j.progress||0;
+  status.hidden=!terminal;
+  if(terminal){
+    status.className='flash-status '+(completed?'success':'failure');
+    $('#flashStatusIcon').textContent=completed?'✓':'!';
+    $('#flashStatusTitle').textContent=`${label} ${completed?'succeeded':'failed'}`;
+    $('#flashStatusMessage').textContent=completed?`${label} completed successfully.`:(j.error||j.message||`${label} failed.`);
+  }
+  renderFlashDetails(jobs);
+};
+
+function clearFlashStatus(){
+  $('#progress').className='progress hidden';
+  $('#flashStatus').hidden=true;
+  $('#flashStatus').className='flash-status';
+}
+
+submitPlan=async function(kind){
+  const main=$('#mainImage').value,boot=$('#bootImage').value;
+  if(!main)return toast('Select the main application first',true);
+  clearFlashStatus();
+  const images=[{artifact_id:main,base_address:$('#mainOffset').value||null}];
+  if(boot)images.push({artifact_id:boot,base_address:$('#bootOffset').value||null});
+  try{
+    await api(`/jobs/${kind}`,{method:'POST',body:JSON.stringify({images,options:{post_action:$('#postAction').value,reset_method:$('#resetMethod').value}})});
+    await refresh();
+  }catch(error){
+    await refresh();
+    toast(error.message,true);
+  }
+};
+
+refresh=async function(){
+  if(refreshBusy)return;
+  refreshBusy=true;
+  try{
+    render(await api('/state',{waiting:false}));
+    updateConnectButton();updateTopControls();updatePackSequenceRunState();updateTargetRecoveryState();
+    const direct=state.connected&&!(state.gdb||[]).length&&state.state!=='busy';
+    $$('[data-action]').forEach(x=>x.disabled=!(direct||state.debugger?.active));
+    lastRefreshError='';
+  }catch(error){
+    const message=error.message||String(error);
+    if(message!==lastRefreshError){toast(message,true);lastRefreshError=message}
+  }finally{refreshBusy=false}
+};
+
 initialise();setInterval(refresh,1000);setInterval(updateWebPresence,250);setInterval(refreshLogs,1500);setInterval(loadDiscovery,3000);if(!localStorage.getItem('pyocd-ui-theme'))localStorage.setItem('pyocd-ui-theme','graphite');if(!localStorage.getItem('pyocd-ui-style'))localStorage.setItem('pyocd-ui-style','workbench');
