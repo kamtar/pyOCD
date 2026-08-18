@@ -75,6 +75,7 @@ class LPC4088(CoreSightTarget):
                                                                 program_page_weight=LARGE_PROGRAM_PAGE_WEIGHT,
                                                                 algo=FLASH_ALGO),
         RamRegion(      start=0x10000000,  length=0x10000),
+        RamRegion(      start=0x20000000,  length=0x8000),
         )
 
     def __init__(self, session, mem_map=None):
@@ -98,3 +99,9 @@ class LPC4088(CoreSightTarget):
             pc = self.read_memory(0x4)
             self.write_core_register('sp', sp)
             self.write_core_register('pc', pc)
+
+
+class LPC4078(LPC4088):
+    """Built-in LPC4078 target using the compatible LPC4088 implementation."""
+
+    pass

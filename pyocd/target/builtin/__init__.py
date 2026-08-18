@@ -244,6 +244,9 @@ BUILTIN_TARGETS = {
           'lpc54114': target_LPC54114J256BD64.LPC54114,
           'lpc54608': target_LPC54608J512ET180.LPC54608,
           'lpc4088': target_LPC4088FBD144.LPC4088,
+          # LPC4078 uses the same compatible built-in implementation, including the
+          # hardware-reset workaround for the LPC40xx debug logic.
+          'lpc4078': target_LPC4088FBD144.LPC4078,
           'ncs36510': target_ncs36510.NCS36510,
           'lpc4088qsb': target_lpc4088qsb.LPC4088qsb,
           'lpc4088dm': target_lpc4088dm.LPC4088dm,
