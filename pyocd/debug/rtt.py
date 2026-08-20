@@ -342,10 +342,11 @@ class GenericRTTDownChannel(RTTDownChannel):
 
         if blocking:
             # Call non-blocking version until all data is written
+            bytes_total = len(data)
             while data:
                 bytes_sent: int = self.write(data, blocking = False)
                 data = data[bytes_sent:]
-            return
+            return bytes_total
 
         # Get offsets
         write_off, read_off = self._target.read_memory_block32(self._offsets_addr, 2)

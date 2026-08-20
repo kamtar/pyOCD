@@ -317,6 +317,21 @@ class Flash:
     def compute_crcs(self, sectors):
         assert self.use_analyzer
 
+        # The analyzer command format stores the page index in a 16-bit field. Validate all
+        # ranges before changing target RAM so an unsupported address cannot silently wrap and
+        # produce CRCs for a different location.
+        encoded_sectors = []
+        for addr, size in sectors:
+            size_val = msb(size)
+            addr_val = addr // size
+            # Size must be a power of 2.
+            assert (1 << size_val) == size
+            # Address must be a multiple of size.
+            assert (addr % size) == 0
+            if not 0 <= addr_val <= 0xffff:
+                raise FlashFailure("flash analyzer address is out of range", address=addr)
+            encoded_sectors.append((size_val << 0) | (addr_val << 16))
+
         # Load analyzer code into target RAM.
         self.target.write_memory_block32(self.flash_algo['analyzer_address'], _ANALYZER_CODE)
 
@@ -329,15 +344,7 @@ class Flash:
 
         results = []
         for offset in range(0, len(sectors), max_commands):
-            data = []
-            for addr, size in sectors[offset:offset + max_commands]:
-                size_val = msb(size)
-                addr_val = addr // size
-                # Size must be a power of 2
-                assert (1 << size_val) == size
-                # Address must be a multiple of size
-                assert (addr % size) == 0
-                data.append((size_val << 0) | (addr_val << 16))
+            data = encoded_sectors[offset:offset + max_commands]
 
             self.target.write_memory_block32(self.page_buffers[0], data)
 

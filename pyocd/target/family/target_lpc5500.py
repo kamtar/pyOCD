@@ -167,7 +167,7 @@ class LPC5500Family(CoreSightTarget):
             LOG.error("Error creating core 0: %s", err, exc_info=self.session.log_tracebacks)
 
         # Create core 1 if the AP is present. It uses the standard Cortex-M core class for v8-M.
-        if (1 in self.aps) and (self.aps[0].is_enabled):
+        if (1 in self.aps) and self.aps[1].is_enabled:
             try:
                 core1 = CortexM_v8M(self.session, self.aps[1], self.memory_map, 1)
                 core1.default_reset_type = self.ResetType.SYSRESETREQ

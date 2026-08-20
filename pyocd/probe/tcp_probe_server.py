@@ -117,8 +117,13 @@ class DebugProbeServer(threading.Thread):
         Any open connections will be forcibly closed. This function does not return until the
         server thread has exited.
         """
-        self._server.shutdown()
-        self.join()
+        try:
+            self._server.shutdown()
+            self.join()
+        finally:
+            # server_bind() is performed in the constructor, so the listening
+            # socket must also be explicitly closed on shutdown.
+            self._server.server_close()
 
     @property
     def is_running(self) -> bool:
@@ -153,6 +158,10 @@ class TCPProbeServer(ThreadingTCPServer):
 
     # Change the default SO_REUSEADDR setting.
     allow_reuse_address = True
+    # A disconnected client is cleaned up by its handler. Do not make server
+    # shutdown wait indefinitely for a handler blocked on a client socket.
+    daemon_threads = True
+    block_on_close = False
 
     def __init__(self, server_address: Tuple[str, int], session: "Session", probe: DebugProbe):
         self._session = session
@@ -210,6 +219,16 @@ class DebugProbeRequestHandler(StreamRequestHandler):
         TRANSFER_FAULT = 12
 
     def setup(self):
+        # Initialise StreamRequestHandler's connection, rfile, and wfile
+        # before performing any request-handler setup. This is the required
+        # socketserver lifecycle order and also leaves the base resources
+        # available if custom setup later raises.
+        super().setup()
+
+        self._did_open = False
+        self._did_connect = False
+        self._lock_count = 0
+
         # Do a DNS lookup on the client.
         try:
             info = socket.gethostbyaddr(self.client_address[0])
@@ -238,12 +257,12 @@ class DebugProbeRequestHandler(StreamRequestHandler):
                 # Command                Handler                            Arg count
                 'hello':                (self._request__hello,              1   ),
                 'readprop':             (self._request__read_property,      1   ),
-                'open':                 (self._probe.open,                  0   ), # 'open'
-                'close':                (self._probe.close,                 0   ), # 'close'
-                'lock':                 (self._probe.lock,                  0   ), # 'lock'
-                'unlock':               (self._probe.unlock,                0   ), # 'unlock'
+                'open':                 (self._request__open,               0   ), # 'open'
+                'close':                (self._request__close,              0   ), # 'close'
+                'lock':                 (self._request__lock,               0   ), # 'lock'
+                'unlock':               (self._request__unlock,             0   ), # 'unlock'
                 'connect':              (self._request__connect,            1   ), # 'connect', protocol:str
-                'disconnect':           (self._probe.disconnect,            0   ), # 'disconnect'
+                'disconnect':           (self._request__disconnect,          0   ), # 'disconnect'
                 'swj_sequence':         (self._probe.swj_sequence,          2   ), # 'swj_sequence', length:int, bits:int
                 'swd_sequence':         (self._probe.swd_sequence,          1   ), # 'swd_sequence', sequences:List[Union[Tuple[int], Tuple[int, int]]] -> Tuple[int, List[bytes]]
                 'jtag_sequence':        (self._probe.jtag_sequence,         4   ), # 'jtag_sequence', cycles:int, tms:int, read_tdo:bool, tdi:int -> Union[None, int]
@@ -270,9 +289,6 @@ class DebugProbeRequestHandler(StreamRequestHandler):
                 'write_block8':         (self._request__write_block8,       3   ), # 'write_block8', handle:int, addr:int, data:List[int]
             }
 
-        # Let superclass do its thing.
-        super().setup()
-
     def finish(self):
         LOG.info("Client %s (port %i) disconnected from probe %s",
                 self._client_domain, self.client_address[1], self._probe.unique_id)
@@ -282,6 +298,34 @@ class DebugProbeRequestHandler(StreamRequestHandler):
             self._probe.flush()
         except exceptions.Error as err:
             LOG.debug("exception while flushing probe on disconnect: %s", err)
+
+        # A client can disappear without sending its normal unlock,
+        # disconnect, and close requests. Release all state owned by this
+        # connection so subsequent clients are not blocked by stale counts or
+        # an open transport.
+        while self._lock_count:
+            try:
+                self._probe.unlock()
+            except Exception as err:
+                LOG.debug("exception while unlocking probe on disconnect: %s", err)
+            finally:
+                self._lock_count -= 1
+
+        if self._did_connect:
+            try:
+                self._probe.disconnect()
+            except Exception as err:
+                LOG.debug("exception while disconnecting probe on disconnect: %s", err)
+            finally:
+                self._did_connect = False
+
+        if self._did_open:
+            try:
+                self._probe.close()
+            except Exception as err:
+                LOG.debug("exception while closing probe on disconnect: %s", err)
+            finally:
+                self._did_open = False
 
         super().finish()
 
@@ -401,7 +445,27 @@ class DebugProbeRequestHandler(StreamRequestHandler):
         # 'hello', protocol-version:int
         if version != self.PROTOCOL_VERSION:
             raise exceptions.Error("client requested unsupported protocol version %i (expected %i)" %
-                    (version, self.PROTOCOL_VERSION))
+                (version, self.PROTOCOL_VERSION))
+
+    def _request__open(self):
+        self._probe.open()
+        self._did_open = True
+
+    def _request__close(self):
+        self._probe.close()
+        self._did_open = False
+
+    def _request__lock(self):
+        self._probe.lock()
+        self._lock_count += 1
+
+    def _request__unlock(self):
+        self._probe.unlock()
+        self._lock_count -= 1
+
+    def _request__disconnect(self):
+        self._probe.disconnect()
+        self._did_connect = False
 
     def _request__read_property(self, name):
         # 'readprop', name:str
@@ -420,6 +484,7 @@ class DebugProbeRequestHandler(StreamRequestHandler):
         except KeyError:
             raise exceptions.Error("invalid protocol name %s" % protocol_name)
         self._probe.connect(protocol)
+        self._did_connect = True
 
     def _request__get_memory_interface_for_ap(self, ap_address_version, ap_nominal_address):
         # 'get_memory_interface_for_ap', ap_address_version:int, ap_nominal_address:int -> handle:int|null

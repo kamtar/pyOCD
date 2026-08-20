@@ -153,7 +153,7 @@ class _Transfer(object):
     def get_result(self):
         """@brief Get the result of this transfer.
         """
-        while self._result is None:
+        while self._result is None and self._error is None:
             if len(self.daplink._commands_to_read) > 0:
                 self.daplink._read_packet()
             else:
@@ -749,8 +749,23 @@ class DAPAccessCMSISDAP(DAPAccessIntf):
         if self._is_open:
             return
 
-        self._interface.open()
+        interface_opened = True
+        try:
+            # Treat open() as potentially partial. Some interface backends can
+            # claim/open the device before a later initialization operation
+            # fails, so make sure the backend is closed on every failed attempt.
+            self._interface.open()
+            self._open_after_interface_open()
+        except Exception:
+            if interface_opened:
+                try:
+                    self._interface.close()
+                except Exception as close_error:
+                    LOG.debug("error closing CMSIS-DAP interface after open failure: %s", close_error)
+            self._is_open = False
+            raise
 
+    def _open_after_interface_open(self):
         # If this probe has already been opened and examined previously, we don't need to examine it again.
         if self._has_opened_once:
             self._init_deferred_buffers()
@@ -818,10 +833,14 @@ class DAPAccessCMSISDAP(DAPAccessIntf):
         assert self._interface is not None
         if not self._is_open:
             return
-        self.flush()
-        self._interface.close()
-        self._is_open = False
-        self._crnt_cmd = _Command(0)
+        try:
+            self.flush()
+        finally:
+            try:
+                self._interface.close()
+            finally:
+                self._is_open = False
+                self._crnt_cmd = _Command(0)
 
     def get_unique_id(self):
         return self._unique_id

@@ -331,7 +331,7 @@ class DebugPort(DelegateHavingMixIn):
         self._addr_size: int = -1
         self._addr_mask: int = -1
         self._errmode: int = -1
-        self._base_addr: int = -1
+        self._base_addr: Optional[int] = None
         self._apacc_mem_interface: Optional[APAccessMemoryInterface] = None
 
         # Subscribe to reset events.
@@ -350,7 +350,7 @@ class DebugPort(DelegateHavingMixIn):
         return ADIVersion.ADIv6 if self._is_dpv3 else ADIVersion.ADIv5
 
     @property
-    def base_address(self) -> int:
+    def base_address(self) -> Optional[int]:
         """@brief Base address of the first component for an ADIv6 system."""
         return self._base_addr
 

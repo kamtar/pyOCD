@@ -54,8 +54,13 @@ class TargetList(object):
         head = self._context.read32(self._list)
         node = head
         is_valid = head != 0
+        seen = set()
 
         while is_valid and next != head:
+            if node in seen:
+                LOG.warning("Cycle detected while reading thread list (list=0x%08x, node=0x%08x), terminating list", self._list, node)
+                break
+            seen.add(node)
             try:
                 # Read the object from the node.
                 obj = self._context.read32(node + LIST_NODE_OBJ_OFFSET)

@@ -4,6 +4,9 @@
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
+from pyocd.core.exceptions import FlashFailure
 from pyocd.flash.flash import Flash, _ANALYZER_CODE
 
 
@@ -33,3 +36,20 @@ def test_compute_crcs_batches_commands_to_page_buffer():
         mock.call(0x20001000, [0x00040002]),
     ]
     assert flash._call_function_and_wait.call_count == 3
+
+
+def test_compute_crcs_rejects_unrepresentable_page_index_before_loading_analyzer():
+    flash = object.__new__(Flash)
+    flash.flash_algo = {
+        'analyzer_address': 0x20000000,
+        'page_size': 8,
+    }
+    flash.use_analyzer = True
+    flash.page_buffers = [0x20001000]
+    flash._region = SimpleNamespace(page_size=8)
+    flash.target = mock.Mock()
+
+    with pytest.raises(FlashFailure, match="analyzer address is out of range"):
+        flash.compute_crcs([(0x10000, 1)])
+
+    flash.target.write_memory_block32.assert_not_called()

@@ -31,4 +31,14 @@ class TestIntervalSvdAccess:
         loader = self.builtin_svd('Musca_B1.svd')
         assert loader.device
         assert [p for p in loader.device.peripherals if p.name == 'UART0']
+        assert not isinstance(loader.device.cpu.icache_present, tuple)
+
+    def test_complex_peripheral_children_have_parent(self):
+        loader = self.builtin_svd('LPC55S36.xml')
+        peripherals = [p for p in loader.device.peripherals
+                       if p._register_arrays or p._clusters]
+        assert peripherals
+        assert all(child.parent is peripheral
+                   for peripheral in peripherals
+                   for child in (peripheral._register_arrays or []) + (peripheral._clusters or []))
 

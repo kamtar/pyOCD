@@ -35,7 +35,7 @@ class ElfSymbolDecoder(object):
         self.elffile = elf
 
         self.symtab = self.elffile.get_section_by_name('.symtab')
-        self.symcount = self.symtab.num_symbols()
+        self.symcount = self.symtab.num_symbols() if self.symtab is not None else 0
         self.symbol_dict = {}
         self.symbol_tree = None
 
@@ -60,6 +60,8 @@ class ElfSymbolDecoder(object):
 
     def _build_symbol_search_tree(self):
         self.symbol_tree = IntervalTree()
+        if self.symtab is None:
+            return
         symbols = self.symtab.iter_symbols()
         for symbol in symbols:
             # Only look for functions and objects.

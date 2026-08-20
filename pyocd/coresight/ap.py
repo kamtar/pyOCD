@@ -275,7 +275,8 @@ class APAddressBase:
         Supports comparing against raw (int) nominal addresses, in which case the DP index is ignored.
         """
         if isinstance(other, APAddressBase):
-            return (self.nominal_address < other.nominal_address) and (self.dp_index < other.dp_index)
+            return (self.nominal_address < other.nominal_address) \
+                or ((self.nominal_address == other.nominal_address) and (self.dp_index < other.dp_index))
         elif isinstance(other, int):
             return (self.nominal_address < other)
         else:
@@ -1051,7 +1052,7 @@ class MEM_AP(AccessPort, memory_interface.MemoryInterface):
 
         try:
             self.dp.write_ap(self.address.address + addr, data)
-        except exceptions.ProbeError:
+        except exceptions.Error:
             # Invalidate cached CSW on exception.
             if ap_regaddr == self._reg_offset + MEM_AP_CSW:
                 self._invalidate_cache()
@@ -1266,13 +1267,15 @@ class MEM_AP(AccessPort, memory_interface.MemoryInterface):
         assert (addr & 0x3) == 0
         addr &= self._address_mask
         size = len(data)
+        data_index = 0
         while size > 0:
             n = self.auto_increment_page_size - (addr & (self.auto_increment_page_size - 1))
             if size*4 < n:
                 n = (size*4) & 0xfffffffc
-            self._write_block32_page(addr, data[:n//4])
-            data = data[n//4:]
-            size -= n//4
+            word_count = n // 4
+            self._write_block32_page(addr, data[data_index:data_index + word_count])
+            data_index += word_count
+            size -= word_count
             addr += n
         return
 

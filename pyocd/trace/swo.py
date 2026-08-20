@@ -92,13 +92,16 @@ class SWOParser:
                 # we can merge the two events. Otherwise we just add them to the pending event
                 # queue separately.
                 if event.comparator == self._pending_data_trace.comparator:
+                    def _first_present(first, second):
+                        return first if first is not None else second
+
                     # Merge the two data trace events.
                     ev = events.TraceDataTraceEvent(cmpn=event.comparator,
-                        pc=(event.pc or self._pending_data_trace.pc),
-                        addr=(event.address or self._pending_data_trace.address),
-                        value=(event.value or self._pending_data_trace.value),
-                        rnw=(event.is_read or self._pending_data_trace.is_read),
-                        sz=(event.transfer_size or self._pending_data_trace.transfer_size),
+                        pc=_first_present(event.pc, self._pending_data_trace.pc),
+                        addr=_first_present(event.address, self._pending_data_trace.address),
+                        value=_first_present(event.value, self._pending_data_trace.value),
+                        rnw=_first_present(event.is_read, self._pending_data_trace.is_read),
+                        sz=_first_present(event.transfer_size, self._pending_data_trace.transfer_size),
                         ts=self._pending_data_trace.timestamp)
                 else:
                     ev = self._pending_data_trace

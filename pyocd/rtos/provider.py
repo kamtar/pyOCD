@@ -82,7 +82,12 @@ class ThreadProvider(object):
         return True
 
     def update_threads(self):
-        if self._is_thread_list_dirty() and self._read_from_target:
+        # Do not consume the run token while target reads are disabled. Otherwise
+        # enabling reads before the next target run can leave the cached list
+        # empty until another run occurs.
+        if not self._read_from_target:
+            return
+        if self._is_thread_list_dirty():
             self._build_thread_list()
 
     def get_threads(self):

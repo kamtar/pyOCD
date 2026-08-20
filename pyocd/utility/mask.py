@@ -75,7 +75,7 @@ def bfx(value: int, msb: int, lsb: int) -> int:
 
 def bfxw(value: int, lsb: int, width: int) -> int:
     """@brief Extract a value from a bitfield given the LSb and width."""
-    mask = bitmask((lsb + width, lsb))
+    mask = bitmask((lsb + width - 1, lsb))
     return (value & mask) >> lsb
 
 def bfi(value: int, msb: int, lsb: int, field: int) -> int:

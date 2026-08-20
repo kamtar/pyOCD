@@ -559,9 +559,9 @@ class Class9ROMTable(ROMTable):
 
         while not foundEnd and entriesRead < actualMaxEntries:
             # Read several entries at a time for performance.
-            readCount = min(actualMaxEntries - entriesRead, entryReadCount)
+            readCount = min((actualMaxEntries - entriesRead) * entrySizeMultiplier, entryReadCount)
             entries = self.ap.read_memory_block32(entryAddress, readCount)
-            entriesRead += readCount
+            entriesRead += readCount // entrySizeMultiplier
 
             # For 64-bit entries, combine pairs of 32-bit values into single 64-bit value.
             if self._width == 64:
@@ -702,12 +702,15 @@ class Class9ROMTable(ROMTable):
         # Wait for status bits to update.
         with Timeout(self.POWER_REQUEST_TIMEOUT) as time_out:
             while time_out.check():
-                power_status = self.ap.read32(dbgpsr_addr)
-                if power_status == self.ROM_TABLE_DBGPSRn_PS_IS_POWERED:
-                    # Sleep for 100 ms.
-                    sleep(0.1)
-                    break
-                elif power_status == self.ROM_TABLE_DBGPSRn_PS_MUST_REMAIN_POWERED:
+                power_status = self.ap.read32(dbgpsr_addr) & self.ROM_TABLE_DBGPSRn_PS_MASK
+                if enable:
+                    if power_status == self.ROM_TABLE_DBGPSRn_PS_IS_POWERED:
+                        # Sleep for 100 ms.
+                        sleep(0.1)
+                        break
+                    elif power_status == self.ROM_TABLE_DBGPSRn_PS_MUST_REMAIN_POWERED:
+                        break
+                elif power_status == self.ROM_TABLE_DBGPSRn_PS_MAYBE_NOT_POWERED:
                     break
             else:
                 LOG.warning("Power request handshake did not complete for power domain #%d.",

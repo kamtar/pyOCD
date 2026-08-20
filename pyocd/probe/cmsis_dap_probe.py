@@ -313,8 +313,18 @@ class CMSISDAPProbe(DebugProbe):
                 self._caps.add(self.Capability.SWD_SEQUENCE)
             if self._link.has_swo():
                 self._caps.add(self.Capability.SWO)
-        except DAPAccess.Error as exc:
-            raise self._convert_exception(exc) from exc
+        except Exception as exc:
+            # Opening includes capability discovery, so failures after the
+            # transport opens must not leave the USB interface allocated.
+            try:
+                self._link.close()
+            except Exception as close_error:
+                LOG.debug("error closing CMSIS-DAP link after open failure: %s", close_error)
+            self._is_open = False
+            self._protocol = None
+            if isinstance(exc, DAPAccess.Error):
+                raise self._convert_exception(exc) from exc
+            raise
 
     def close(self) -> None:
         if not self._is_open:
@@ -323,9 +333,11 @@ class CMSISDAPProbe(DebugProbe):
             TRACE.debug("trace: close")
 
             self._link.close()
-            self._is_open = False
         except DAPAccess.Error as exc:
             raise self._convert_exception(exc) from exc
+        finally:
+            self._is_open = False
+            self._protocol = None
 
     # ------------------------------------------- #
     #          Target control functions
@@ -381,9 +393,10 @@ class CMSISDAPProbe(DebugProbe):
 
         try:
             self._link.disconnect()
-            self._protocol = None
         except DAPAccess.Error as exc:
             raise self._convert_exception(exc) from exc
+        finally:
+            self._protocol = None
 
     def set_clock(self, frequency: float) -> None:
         TRACE.debug("trace: set_clock(freq=%i)", frequency)

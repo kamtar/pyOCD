@@ -61,6 +61,7 @@ class StlinkProbe(DebugProbe):
         self._link = STLink(device)
         self._is_open = False
         self._is_connected = False
+        self._protocol: Optional[DebugProbe.Protocol] = None
         self._nreset_state = False
         self._memory_interfaces = {}
         self._board_id = None
@@ -127,7 +128,7 @@ class StlinkProbe(DebugProbe):
 
     @property
     def wire_protocol(self):
-        return DebugProbe.Protocol.SWD if self._is_connected else None
+        return self._protocol if self._is_connected else None
 
     @property
     def is_open(self):
@@ -155,45 +156,75 @@ class StlinkProbe(DebugProbe):
     def open(self):
         assert self.session is not None
 
-        self._link.open()
-        self._is_open = True
+        try:
+            self._link.open()
+            self._is_open = True
 
-        # This call is ignored if the STLink is not V3.
-        prescaler = self.session.options.get('stlink.v3_prescaler')
-        if prescaler not in (1, 2, 4):
-            prescaler = self.session.options.get_default('stlink.v3_prescaler')
-        self._link.set_prescaler(prescaler)
+            # This call is ignored if the STLink is not V3.
+            prescaler = self.session.options.get('stlink.v3_prescaler')
+            if prescaler not in (1, 2, 4):
+                prescaler = self.session.options.get_default('stlink.v3_prescaler')
+            self._link.set_prescaler(prescaler)
 
-        # Update capabilities.
-        self._caps = {
-                self.Capability.SWO,
-                self.Capability.MANAGED_AP_SELECTION,
-                self.Capability.MANAGED_DPBANKSEL,
-                }
-        if self._link.supports_banked_dp:
-            self._caps.add(self.Capability.BANKED_DP_REGISTERS)
+            # Update capabilities.
+            self._caps = {
+                    self.Capability.SWO,
+                    self.Capability.MANAGED_AP_SELECTION,
+                    self.Capability.MANAGED_DPBANKSEL,
+                    }
+            if self._link.supports_banked_dp:
+                self._caps.add(self.Capability.BANKED_DP_REGISTERS)
+        except Exception:
+            try:
+                self._link.close()
+            except Exception:
+                pass
+            self._is_open = False
+            self._is_connected = False
+            self._protocol = None
+            self._memory_interfaces = {}
+            raise
 
     def close(self):
-        self._link.close()
-        self._is_open = False
+        try:
+            self._link.close()
+        finally:
+            self._is_open = False
+            self._is_connected = False
+            self._protocol = None
+            self._memory_interfaces = {}
 
     # ------------------------------------------- #
     #          Target control functions
     # ------------------------------------------- #
     def connect(self, protocol=None):
-        self._link.enter_debug(STLink.Protocol.SWD)
+        if protocol in (None, DebugProbe.Protocol.DEFAULT):
+            protocol = DebugProbe.Protocol.SWD
+
+        stlink_protocol = {
+                DebugProbe.Protocol.SWD: STLink.Protocol.SWD,
+                DebugProbe.Protocol.JTAG: STLink.Protocol.JTAG,
+                }[protocol]
+        self._link.enter_debug(stlink_protocol)
         self._is_connected = True
+        self._protocol = protocol
 
     def disconnect(self):
         # TODO Close the APs. When this is attempted, we get an undocumented 0x1d error. Doesn't
         #      seem to be necessary, anyway.
         self._memory_interfaces = {}
 
-        self._link.enter_idle()
-        self._is_connected = False
+        try:
+            self._link.enter_idle()
+        finally:
+            self._is_connected = False
+            self._protocol = None
 
     def set_clock(self, frequency):
-        self._link.set_swd_frequency(frequency)
+        if self._protocol is DebugProbe.Protocol.JTAG:
+            self._link.set_jtag_frequency(frequency)
+        else:
+            self._link.set_swd_frequency(frequency)
 
     def reset(self):
         assert self.session

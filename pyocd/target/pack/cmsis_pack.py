@@ -461,10 +461,10 @@ class CmsisPackDescription:
                 # now.
                 prev_elem = map[k]
                 prev_start, prev_size = get_start_and_size(prev_elem)
-                # Overlap: start or end between previous start and previous end
+                # Overlap: the inclusive address ranges intersect.
                 end = start + size - 1
                 prev_end = prev_start + prev_size - 1
-                if (prev_start <= start < prev_end) or (prev_start <= end < prev_end):
+                if (prev_start <= end) and (start <= prev_end):
                     # Only report warnings for overlapping regions from the same processor. Allow regions for
                     # different processors to override each other, since we don't yet support maps for each
                     # processor.
@@ -783,6 +783,7 @@ class CmsisPackDevice:
                         'start': start,
                         'length': size,
                         'access': access,
+                        'pname': elem.attrib.get('Pname', None),
                         'is_default': is_default,
                         'is_boot_memory': is_startup,
                         'is_testable': is_default,

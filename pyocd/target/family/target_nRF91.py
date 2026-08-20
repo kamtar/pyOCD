@@ -423,9 +423,9 @@ class NRF91(CoreSightTarget):
 
     def __init__(self, session, memory_map=None):
         super(NRF91, self).__init__(session, memory_map)
-        if memory_map.get_region_for_address(0x00ff8000) is None:
+        if self.memory_map.get_region_for_address(0x00ff8000) is None:
             LOG.debug("Adding UICR region")
-            memory_map.add_region(
+            self.memory_map.add_region(
                 FlashRegion(
                     start=0x00ff8000,
                     length=0x1000,

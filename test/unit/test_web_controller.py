@@ -206,6 +206,19 @@ def test_busy_snapshot_uses_cached_metadata_without_probe_properties(tmp_path):
     controller.close()
 
 
+def test_memory_read_rejects_short_target_reads(tmp_path):
+    controller = WebController(str(tmp_path))
+    controller._session = SimpleNamespace(
+        is_open=True,
+        target=SimpleNamespace(read_memory_block8=lambda address, length: [0xAA]),
+    )
+    with pytest.raises(WebError, match="returned 1 of 4") as error:
+        controller.read_memory(0, 4)
+    assert error.value.code == "memory_read_failed"
+    controller._session = None
+    controller.close()
+
+
 @pytest.mark.parametrize("failed_read", ["get_state", "is_locked"])
 def test_snapshot_reconciles_lost_debug_link(tmp_path, failed_read):
     controller = WebController(str(tmp_path))

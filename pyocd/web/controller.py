@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from io import StringIO
+import inspect
 from importlib import metadata
 import json
 import logging
@@ -48,6 +49,8 @@ try:
     import cmsis_pack_manager
 except ImportError:
     cmsis_pack_manager = None
+
+LOG = logging.getLogger(__name__)
 
 
 class WebError(RuntimeError):
@@ -1008,16 +1011,20 @@ class WebController:
                     dp.post_reset_recovery()
                     target.halt()
 
+            # Resolve target methods only when their action is selected. Besides
+            # avoiding needless attribute lookups, this permits reset-only
+            # targets and lightweight session doubles that do not expose the
+            # unrelated core-control methods.
             actions: Dict[str, Callable[[], None]] = {
-                "halt": target.halt,
-                "resume": target.resume,
-                "step": target.step,
+                "halt": lambda: target.halt(),
+                "resume": lambda: target.resume(),
+                "step": lambda: target.step(),
                 # A connected reset must preserve the live debug link. A core-only
                 # reset avoids the ResetSystem sequence, which can momentarily remove
                 # the DAP and leave this long-lived web session without acknowledgements.
                 "reset": lambda: target.reset(Target.ResetType.CORE),
                 "reset-hardware": reset_hardware,
-                "reset-halt": target.reset_and_halt,
+                "reset-halt": lambda: target.reset_and_halt(),
                 "reset-halt-core": lambda: reset_and_halt(Target.ResetType.CORE),
                 "reset-halt-hardware": lambda: reset_and_halt(Target.ResetType.HARDWARE),
             }
@@ -1074,8 +1081,13 @@ class WebController:
                     return data
                 except (GdbMiError, ValueError) as exc:
                     raise WebError("gdb_memory_failed", str(exc), 409) from exc
-            data = self._require_exclusive().target.read_memory_block8(address, length)
-            return bytes(data)
+            data = bytes(self._require_exclusive().target.read_memory_block8(address, length))
+            if len(data) != length:
+                raise WebError(
+                    "memory_read_failed",
+                    f"Target returned {len(data)} of {length} requested bytes",
+                    409)
+            return data
 
     def upload(self, name: str, content: bytes) -> Dict[str, Any]:
         safe_name = Path(name).name or "firmware.bin"
@@ -1463,9 +1475,22 @@ class WebController:
             # end that client session, leaving the listener ready for another
             # connection until the user turns the service off.
             session.options.set("persist", True)
+            # Keep compatibility with older GDBServer implementations and
+            # test doubles that predate the optional callback.
+            try:
+                signature = inspect.signature(GDBServer)
+                accepts_callback = (
+                    "activity_callback" in signature.parameters
+                    or any(parameter.kind is inspect.Parameter.VAR_KEYWORD
+                           for parameter in signature.parameters.values()))
+            except (TypeError, ValueError):
+                accepts_callback = False
             try:
                 for core in selected_cores:
-                    server = GDBServer(session, core=core, activity_callback=self._gdb_flash_activity)
+                    server_kwargs = {"core": core}
+                    if accepts_callback:
+                        server_kwargs["activity_callback"] = self._gdb_flash_activity
+                    server = GDBServer(session, **server_kwargs)
                     session.gdbservers[core] = server
                     self._gdb[core] = server
                     server.start()
@@ -1495,7 +1520,9 @@ class WebController:
         for server in list(self._gdb.values()):
             server.stop()
         if self._session:
-            self._session.gdbservers.clear()
+            gdbservers = getattr(self._session, "gdbservers", None)
+            if gdbservers is not None:
+                gdbservers.clear()
         self._gdb.clear()
 
     def _debugger_event(self, record: MiRecord) -> None:

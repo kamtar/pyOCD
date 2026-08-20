@@ -16,6 +16,7 @@
 
 import pytest
 import logging
+import pyocd.coresight.rom_table as rom_table_module
 from intervaltree import (Interval, IntervalTree)
 
 from .conftest import mock
@@ -24,6 +25,7 @@ from pyocd.coresight.component import CoreSightCoreComponent
 from pyocd.core import memory_map
 from pyocd.coresight.rom_table import (
     CoreSightComponentID,
+    Class9ROMTable,
     ROMTable,
     )
 from pyocd.core.memory_interface import MemoryInterface
@@ -377,4 +379,64 @@ class TestRomTable:
         assert ahb.designer == 0x43b
         assert ahb.part == 0x9e3
         assert ahb.archid == 0xa17
+
+    def test_c9_64bit_table_entry_limit(self):
+        # The maximum entry count is in logical 64-bit entries, while the memory interface reads
+        # 32-bit words. This verifies that entries beyond the first 128 are still discovered.
+        entry_count = 129
+        words = [word for _ in range(entry_count) for word in (0x3, 0)] + [0, 0]
+
+        class TableMemory:
+            def read_memory_block32(self, addr, size):
+                return words[addr // 4:addr // 4 + size]
+
+        table = Class9ROMTable.__new__(Class9ROMTable)
+        table._ap = TableMemory()
+        table._address = 0
+        table._width = 64
+        discovered = []
+        table._handle_table_entry = lambda entry, number: discovered.append(number)
+
+        table._read_table()
+
+        assert discovered == list(range(entry_count))
+
+    def test_c9_power_domain_disable_waits_for_unpowered(self, monkeypatch):
+        class OnePollTimeout:
+            def __init__(self, _timeout):
+                self._polls = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def check(self):
+                self._polls += 1
+                return self._polls == 1
+
+        class PowerMemory:
+            def __init__(self):
+                self.writes = []
+
+            def read32(self, addr):
+                if addr == Class9ROMTable.ROM_TABLE_DBGPCRn:
+                    return (Class9ROMTable.ROM_TABLE_DBGPCRn_PRESENT_MASK
+                            | Class9ROMTable.ROM_TABLE_DBGPCRn_PR_MASK)
+                assert addr == Class9ROMTable.ROM_TABLE_DBGPSRn
+                return Class9ROMTable.ROM_TABLE_DBGPSRn_PS_MAYBE_NOT_POWERED
+
+            def write32(self, addr, value):
+                self.writes.append((addr, value))
+
+        monkeypatch.setattr(rom_table_module, 'Timeout', OnePollTimeout)
+        memory = PowerMemory()
+        table = Class9ROMTable.__new__(Class9ROMTable)
+        table._ap = memory
+        table._address = 0
+
+        assert table.power_debug_domain(0, enable=False)
+        assert memory.writes == [(Class9ROMTable.ROM_TABLE_DBGPCRn,
+                                  Class9ROMTable.ROM_TABLE_DBGPCRn_PRESENT_MASK)]
 

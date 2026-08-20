@@ -34,8 +34,13 @@ class TargetList(object):
     def __iter__(self):
         # Read first item on list.
         node = self._context.read32(self._list)
+        seen = set()
 
         while node != 0:
+            if node in seen:
+                LOG.warning("Cycle detected while reading thread list (list=0x%08x, node=0x%08x), terminating list", self._list, node)
+                break
+            seen.add(node)
             # Return previously read item.
             yield node
 

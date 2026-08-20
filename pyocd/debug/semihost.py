@@ -308,10 +308,9 @@ class InternalSemihostIOHandler(SemihostIOHandler):
             f = self.open_files[STDIN_FD]
             if f is not None:
                 data = f.read(1)
-                c = ord(data[0:1])
-                return c
+                return ord(data[0:1]) if data else -1
             else:
-                return 0
+                return -1
         except OSError as e:
             self._errno = e.errno
             return 0
@@ -553,7 +552,11 @@ class SemihostAgent:
             except ValueError:
                 # No null terminator was found. Append all of data.
                 target_data += bytes(data)
-                ptr += 32
+                if not data:
+                    # A successful empty read cannot make progress and would
+                    # otherwise leave this bounded string scan spinning forever.
+                    break
+                ptr += len(data)
         return target_data
 
     def handle_sys_open(self, args: int) -> int:

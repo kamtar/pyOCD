@@ -295,6 +295,11 @@ class FlashBuilder(MemoryBuilder):
         """
         assert len(self.flash_operation_list) > 0
 
+        # Rebuild from the complete operation list when data is added after a previous prepare.
+        # Retaining the old page and sector objects would duplicate stale work on the next erase
+        # or program operation.
+        self.sector_list.clear()
+        self.page_list.clear()
         self.program_byte_count = 0
 
         flash_addr = self.flash_operation_list[0].addr
@@ -757,7 +762,9 @@ class FlashBuilder(MemoryBuilder):
 
         # Analyze unknown pages using either CRC32 analyzer or partial reads.
         if any(page.same is None for page in self.page_list):
-            if self.flash.get_flash_info().crc_supported:
+            if (self.flash.get_flash_info().crc_supported
+                    and all((page.addr // page.size) <= 0xffff
+                            for page in self.page_list if page.same is None)):
                 self._analyze_pages_with_crc32(fast_verify)
                 self.perf.analyze_type = FlashBuilder.FLASH_ANALYSIS_CRC32
             elif self.flash.region.is_readable:

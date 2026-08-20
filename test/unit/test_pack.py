@@ -15,12 +15,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import cmsis_pack_manager
+import io
 import zipfile
 from xml.etree import ElementTree
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import cmsis_pack_manager
+import pytest
 
 from pyocd.target.pack import (cmsis_pack, flash_algo, pack_target)
 from pyocd.target.pack.flm_region_builder import FlmFlashRegionBuilder
@@ -211,6 +213,31 @@ class TestPack:
         assert isinstance(flash, memory_map.FlashRegion)
         assert flash.start == 0 and flash.length == 1 * 1024 * 1024
         # assert flash.sector_size == 4096
+
+    def test_memory_pname_is_preserved(self):
+        pdsc = cmsis_pack.CmsisPackDescription(None, io.BytesIO(b'''\
+            <package><devices><family Dfamily="Test" Dvendor="Vendor:0">
+              <device Dname="Part">
+                <memory name="core_ram" Pname="CM0" start="0x20000000" size="0x1000" access="rwx"/>
+              </device>
+            </family></devices></package>
+        '''))
+
+        region = pdsc.devices[0].memory_map[0]
+
+        assert region.attributes['pname'] == 'CM0'
+
+    def test_memory_overlap_containment_is_removed(self):
+        pdsc = cmsis_pack.CmsisPackDescription(None, io.BytesIO(b'''\
+            <package><devices><family Dfamily="Test" Dvendor="Vendor:0">
+              <device Dname="Part">
+                <memory name="small" start="0x100" size="0x10" access="rwx"/>
+                <memory name="large" start="0x0" size="0x200" access="rwx"/>
+              </device>
+            </family></devices></package>
+        '''))
+
+        assert len(pdsc.devices[0].memory_map) == 1
 
 class TestFLM:
     def test_algo(self, k64algo):

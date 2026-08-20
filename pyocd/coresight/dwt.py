@@ -127,6 +127,14 @@ class DWT(CoreSightComponent):
 
     def set_watchpoint(self, addr, size, type):
         """@brief Set a hardware watchpoint."""
+        if type not in self.WATCH_TYPE_TO_FUNCT:
+            LOG.error("Invalid watchpoint type %i", type)
+            return False
+
+        if size not in self.WATCH_SIZE_TO_MASK:
+            LOG.error('Watchpoint of size %d not supported by device', size)
+            return False
+
         if self.dwt_configured is False:
             self.init()
 
@@ -134,20 +142,8 @@ class DWT(CoreSightComponent):
         if watch is not None:
             return True
 
-        if type not in self.WATCH_TYPE_TO_FUNCT:
-            LOG.error("Invalid watchpoint type %i", type)
-            return False
-
         for watch in self.watchpoints:
             if watch.func == 0:
-                watch.addr = addr
-                watch.func = self.WATCH_TYPE_TO_FUNCT[type]
-                watch.size = size
-
-                if size not in self.WATCH_SIZE_TO_MASK:
-                    LOG.error('Watchpoint of size %d not supported by device', size)
-                    return False
-
                 mask = self.WATCH_SIZE_TO_MASK[size]
                 self.ap.write_memory(watch.comp_register_addr + self.DWT_MASK_OFFSET, mask)
                 if self.ap.read_memory(watch.comp_register_addr + self.DWT_MASK_OFFSET) != mask:
@@ -155,7 +151,11 @@ class DWT(CoreSightComponent):
                     return False
 
                 self.ap.write_memory(watch.comp_register_addr, addr)
-                self.ap.write_memory(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET, watch.func)
+                function = self.WATCH_TYPE_TO_FUNCT[type]
+                self.ap.write_memory(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET, function)
+                watch.addr = addr
+                watch.func = function
+                watch.size = size
                 self.watchpoint_used += 1
                 return True
 

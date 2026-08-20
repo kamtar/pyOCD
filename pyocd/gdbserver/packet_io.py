@@ -89,6 +89,7 @@ class GDBServerPacketIOThread(threading.Thread):
         self.drop_reply = False
         self._last_packet = b''
         self._closed = False
+        self._write_lock = threading.Lock()
         self.start()
 
     def set_send_acks(self, ack):
@@ -99,6 +100,7 @@ class GDBServerPacketIOThread(threading.Thread):
 
     def stop(self, timeout: float = 1.0):
         self._shutdown_event.set()
+        self._closed = True
         self.join(timeout)
 
     def send(self, packet):
@@ -156,7 +158,9 @@ class GDBServerPacketIOThread(threading.Thread):
                 # Ignore timeouts.
                 pass
             except OSError as err:
-                LOG.debug("Packet IO OSError: %s", err)
+                LOG.debug("Packet IO connection error during receive: %s", err)
+                self._closed = True
+                break
 
             if self._shutdown_event.is_set():
                 break
@@ -168,20 +172,32 @@ class GDBServerPacketIOThread(threading.Thread):
     def _write_packet(self, packet):
         TRACE_PACKETS.debug('--<<<< GDB send %d bytes: %s', len(packet), packet)
 
-        # Make sure the entire packet is sent.
-        try:
-            remaining = len(packet)
-            while remaining:
-                written = self._socket.write(packet)
-                remaining -= written
-                if remaining:
-                    packet = packet[written:]
-        except (ConnectionAbortedError, ConnectionResetError) as err:
-            LOG.warning("Packet IO connection unexpectedly closed during send (%s)", err)
-            self._closed = True
+        if not self._write_raw(packet):
+            return False
 
         if self.send_acks:
             self._expecting_ack = True
+        return True
+
+    def _write_raw(self, data):
+        """Write all of *data* while serializing writes from both packet paths."""
+        with self._write_lock:
+            remaining = len(data)
+            while remaining:
+                try:
+                    written = self._socket.write(data)
+                except OSError as err:
+                    LOG.warning("Packet IO connection unexpectedly closed during send (%s)", err)
+                    self._closed = True
+                    return False
+                if written is None or written <= 0:
+                    LOG.warning("Packet IO socket returned zero bytes during send")
+                    self._closed = True
+                    return False
+                remaining -= written
+                if remaining:
+                    data = data[written:]
+        return True
 
     def _check_expected_ack(self):
         # Handle expected ack.
@@ -213,29 +229,39 @@ class GDBServerPacketIOThread(threading.Thread):
                 self.interrupt_event.set()
                 self._buffer = self._buffer[1:]
 
-            try:
-                # Look for complete packet and extract from buffer.
-                pkt_begin = self._buffer.index(b"$")
-                pkt_end = self._buffer.index(b"#") + 2
-                if pkt_begin >= 0 and pkt_end < len(self._buffer):
-                    pkt = self._buffer[pkt_begin:pkt_end + 1]
-                    self._buffer = self._buffer[pkt_end + 1:]
-                    self._handling_incoming_packet(pkt)
-                else:
-                    break
-            except ValueError:
+            # Look for a complete packet and extract it from the buffer. The '#'
+            # delimiter must be searched after the '$' start delimiter; otherwise
+            # junk or a '#' in a partial packet can desynchronise the stream.
+            pkt_begin = self._buffer.find(b"$")
+            if pkt_begin < 0:
+                # Discard non-packet data so an invalid peer cannot grow the
+                # receive buffer without bound.
+                self._buffer = b''
+                break
+
+            if pkt_begin:
+                self._buffer = self._buffer[pkt_begin:]
+
+            pkt_end = self._buffer.find(b"#", 1)
+            if pkt_end < 0 or len(self._buffer) < pkt_end + 3:
                 # No complete packet received yet.
                 break
 
+            packet_end = pkt_end + 3
+            pkt = self._buffer[:packet_end]
+            self._buffer = self._buffer[packet_end:]
+            self._handling_incoming_packet(pkt)
+
     def _handling_incoming_packet(self, packet):
         # Compute checksum
-        data, cksum = packet[1:].split(b'#')
+        data, delimiter, cksum = packet[1:].partition(b'#')
+        good_format = (delimiter == b'#') and (len(cksum) == 2)
         computedCksum = checksum(data)
-        goodPacket = (computedCksum.lower() == cksum.lower())
+        goodPacket = good_format and (computedCksum.lower() == cksum.lower())
 
         if self.send_acks:
             ack = b'+' if goodPacket else b'-'
-            self._socket.write(ack)
+            self._write_raw(ack)
             TRACE_ACK.debug("Packet IO sending ack: %s", ack)
 
         if goodPacket:

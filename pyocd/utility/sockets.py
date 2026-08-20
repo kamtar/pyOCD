@@ -47,8 +47,7 @@ class ConnectedSocket(object):
                     ip = "localhost"
             except ValueError:
                 pass
-            else:
-                return "%s:%d" % (ip, port)
+            return "%s:%d" % (ip, port)
         except Exception as e:
             return None
 
@@ -70,17 +69,22 @@ class ListenerSocket(object):
 
     def init(self):
         if self.listener is None:
-            self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.listener.bind((self.host, self.port))
-            # If we were asked for port 0, that's treated as "auto".
-            # Read back the port - allows our user to find (and print) it,
-            # and means that if we're closed then re-opened, as happens when
-            # persisting for multiple sessions, we reuse the same port, which
-            # is convenient.
-            if self.port == 0:
-                self.port = self.listener.getsockname()[1]
-            self.listener.listen(1)
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                listener.bind((self.host, self.port))
+                # If we were asked for port 0, that's treated as "auto".
+                # Read back the port - allows our user to find (and print) it,
+                # and means that if we're closed then re-opened, as happens when
+                # persisting for multiple sessions, we reuse the same port, which
+                # is convenient.
+                if self.port == 0:
+                    self.port = listener.getsockname()[1]
+                listener.listen(1)
+            except Exception:
+                listener.close()
+                raise
+            self.listener = listener
 
     def accept(self, timeout=0.5):
         # Accept a new client connection.
@@ -119,10 +123,15 @@ class ClientSocket(object):
 
     def close(self):
         if self._socket is not None:
-            # Close both ends of the connection, then close the socket itself.
-            self._socket.shutdown(socket.SHUT_RDWR)
-            self._socket.close()
-            self._socket = None
+            try:
+                # Close both ends of the connection, then close the socket itself.
+                self._socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                # The peer may already have closed its side of the connection.
+                pass
+            finally:
+                self._socket.close()
+                self._socket = None
 
     def set_blocking(self, blocking):
         self._socket.setblocking(blocking)
@@ -162,4 +171,12 @@ class ClientSocket(object):
                     pass
                 else:
                     break
+            if not data:
+                # Return a final unterminated line, or an empty bytes object at
+                # EOF. Without this check recv() returning b'' spins forever.
+                if self._buffer:
+                    data = bytes(self._buffer)
+                    self._buffer.clear()
+                    return data
+                return b''
             self._buffer += data

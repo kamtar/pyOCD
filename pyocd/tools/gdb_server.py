@@ -241,7 +241,7 @@ class GDBServerTool(object):
                     }
                 if t._svd_location is not None:
                     svdPath = t._svd_location.filename
-                    if os.path.exists(svdPath):
+                    if isinstance(svdPath, (str, os.PathLike)) and os.path.exists(svdPath):
                         d['svd_path'] = svdPath
                 targets.append(d)
 

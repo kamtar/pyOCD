@@ -92,9 +92,9 @@ class RTTChanTCPWorker(RTTChanWorker):
         if self.server is None:
             return
 
-        sel = selectors.DefaultSelector()
-        sel.register(self.server, selectors.EVENT_READ, None)
-        events = sel.select(timeout = 0)
+        with selectors.DefaultSelector() as sel:
+            sel.register(self.server, selectors.EVENT_READ, None)
+            events = sel.select(timeout = 0)
         for key, _ in events:
             if key.fileobj == self.server:
                 self.client, _ = self.server.accept()
@@ -114,9 +114,9 @@ class RTTChanTCPWorker(RTTChanWorker):
             if self.client is None:
                 return b''
 
-        sel = selectors.DefaultSelector()
-        sel.register(self.client, selectors.EVENT_READ, None)
-        events = sel.select(timeout = 0)
+        with selectors.DefaultSelector() as sel:
+            sel.register(self.client, selectors.EVENT_READ, None)
+            events = sel.select(timeout = 0)
         for key, _ in events:
             if key.fileobj == self.client:
                 data = self.client.recv(4096)
@@ -161,6 +161,9 @@ class RTTChanFileWorker(RTTChanWorker):
             try:
                 self._f_in = open(file_in, 'rb')
             except OSError as e:
+                if self._f_out is not None:
+                    self._f_out.close()
+                    self._f_out = None
                 raise OSError(f"Failed to open RTT input file {file_in}: {e}")
 
 
@@ -238,6 +241,8 @@ class RTTChanSysViewFileWorker(RTTChanWorker):
 
     def get_down_data(self):
         if not self._started:
+            if self._rtt_channel >= len(self._rtt_server.control_block.down_channels):
+                return b""
             down_chan: RTTDownChannel = self._rtt_server.control_block.down_channels[self._rtt_channel]
             if down_chan.bytes_free == down_chan.size:
                 # Channel is empty, can start
@@ -400,13 +405,17 @@ class RTTServer:
         if not self.running:
             return
 
-        for i, worker in enumerate(self.workers):
-            if worker is not None:
-                worker.close()
-
-        self.workers = None
-        self.up_buffers = None
-        self.down_buffers = None
+        try:
+            for i, worker in enumerate(self.workers):
+                if worker is not None:
+                    try:
+                        worker.close()
+                    except Exception:
+                        LOG.exception("Error closing RTT channel worker %d", i)
+        finally:
+            self.workers = None
+            self.up_buffers = None
+            self.down_buffers = None
 
     @property
     def running(self):

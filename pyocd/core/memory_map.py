@@ -170,7 +170,7 @@ class MemoryRangeBase:
         return self.start == other.start and self.length == other.length
 
     def __lt__(self, other: "MemoryRangeBase") -> bool:
-        return self.start < other.start or (self.start == other.start and self.length == other.length)
+        return self.start < other.start or (self.start == other.start and self.length < other.length)
 
 class MemoryRange(MemoryRangeBase):
     """@brief A range of memory optionally tied to a region."""

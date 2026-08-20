@@ -156,8 +156,9 @@ class TCPClientProbe(DebugProbe):
         """
         # Protect requests with the local lock.
         with self._lock:
+            request_id = self.request_id
             rq = {
-                    "id": self.request_id,
+                    "id": request_id,
                     "request": request,
                 }
             if len(args):
@@ -176,6 +177,8 @@ class TCPClientProbe(DebugProbe):
             # Check for required keys.
             if ('id' not in decoded_response) or ('status' not in decoded_response):
                 raise exceptions.ProbeError("malformed response from server; missing required field")
+            if decoded_response['id'] != request_id:
+                raise exceptions.ProbeError("response ID does not match request ID")
 
             # Check response status.
             exc = None
@@ -218,21 +221,35 @@ class TCPClientProbe(DebugProbe):
         return result
 
     def open(self):
-        if not self._is_open:
-            self._socket.connect()
-            self._is_open = True
-            self._socket.set_timeout(0.1)
+        try:
+            if not self._is_open:
+                self._socket.connect()
+                self._is_open = True
+                self._socket.set_timeout(0.1)
 
-        # Send hello message.
-        self._perform_request('hello', self.PROTOCOL_VERSION)
-
-        self._perform_request('open')
+            # Send hello message.
+            self._perform_request('hello', self.PROTOCOL_VERSION)
+            self._perform_request('open')
+        except Exception:
+            # A failed handshake leaves no usable client session. Close the
+            # socket even when the failure occurred after connect().
+            if self._is_open:
+                try:
+                    self._socket.close()
+                finally:
+                    self._is_open = False
+            raise
 
     def close(self):
         if self._is_open:
-            self._perform_request('close')
-            self._socket.close()
-            self._is_open = False
+            try:
+                self._perform_request('close')
+            finally:
+                try:
+                    self._socket.close()
+                finally:
+                    self._is_open = False
+                    self._lock_count = 0
 
     def lock(self):
         # The lock count is then used to only send the remote lock request once.

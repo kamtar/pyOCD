@@ -50,10 +50,14 @@ class ColumnFormatter:
         @param self The object.
         @param item_list Must be a list of bi-tuples (name, value) sorted in the desired display order.
         """
-        self._items.extend(item_list)
+        # Materialise the iterable once. This method accepts any Iterable, including
+        # generators, so iterating it a second time would otherwise lose the width
+        # calculation.
+        items = list(item_list)
+        self._items.extend(items)
 
         # Update max widths.
-        for name, value in item_list:
+        for name, value in items:
             self._max_name_width = max(self._max_name_width, len(name))
             self._max_value_width = max(self._max_value_width, len(value))
 
@@ -62,8 +66,13 @@ class ColumnFormatter:
         @param self The object.
         @return String containing the output of the column printer.
         """
+        if not self._items:
+            return ""
+
         item_width = self._max_name_width + self._max_value_width  + self._inset * 2 + 2
-        column_count = self._term_width // item_width
+        # Always render at least one column, even when the terminal is narrower
+        # than the calculated item width.
+        column_count = max(1, self._term_width // item_width)
         row_count = (len(self._items) + column_count - 1) // column_count
 
         rows = [[i for i in self._items[r::row_count]]

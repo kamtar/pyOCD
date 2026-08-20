@@ -492,6 +492,10 @@ class SVDPeripheral(SVDElement):
             i.parent = self
         for r in _none_as_empty(self._registers):
             r.parent = self
+        for r in _none_as_empty(self._register_arrays):
+            r.parent = self
+        for c in _none_as_empty(self._clusters):
+            c.parent = self
 
     def __getattr__(self, attr):
         return self._lookup_possibly_derived_attribute(attr)
@@ -530,10 +534,10 @@ class SVDCpu(SVDElement):
         self.mpu_present = mpu_present
         self.fpu_present = fpu_present
         self.fpu_dp = fpu_dp
-        self.icache_present = icache_present,
-        self.dcache_present = dcache_present,
-        self.itcm_present = itcm_present,
-        self.dtcm_present = dtcm_present,
+        self.icache_present = icache_present
+        self.dcache_present = dcache_present
+        self.itcm_present = itcm_present
+        self.dtcm_present = dtcm_present
         self.vtor_present = vtor_present
         self.nvic_prio_bits = nvic_prio_bits
         self.vendor_systick_config = vendor_systick_config

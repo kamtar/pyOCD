@@ -142,7 +142,9 @@ class StdioFile(StdioBase):
             if isinstance(_stdio_file_in, (list, tuple)):
                 if len(_stdio_file_in) <= core or _stdio_file_in[core] is None:
                     LOG.debug("No input file configured for core %d", core)
-                stdio_file_in = _stdio_file_in[core]
+                    stdio_file_in = None
+                else:
+                    stdio_file_in = _stdio_file_in[core]
             else:
                 if is_multi_core:
                     root, ext = os.path.splitext(_stdio_file_in)

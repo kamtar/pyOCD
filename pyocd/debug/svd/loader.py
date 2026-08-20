@@ -17,6 +17,7 @@
 
 import threading
 import logging
+import io
 import importlib_resources
 import zipfile
 
@@ -32,9 +33,14 @@ class SVDFile(object):
     def from_builtin(cls, svd_name):
         try:
             zip_ref = importlib_resources.files("pyocd").joinpath(BUILTIN_SVD_DATA_PATH)
-            zip_stream = zip_ref.open('rb')
-            zip = zipfile.ZipFile(zip_stream, 'r')
-            return SVDFile(zip.open(svd_name))
+            # Read the selected member while both archive resources are under
+            # context management. Keeping ZipExtFile alive until the background
+            # parser runs otherwise keeps the package ZIP and its stream open for
+            # every target that loads built-in SVD data.
+            with zip_ref.open('rb') as zip_stream:
+                with zipfile.ZipFile(zip_stream, 'r') as archive:
+                    data = archive.read(svd_name)
+            return cls(io.BytesIO(data))
         except (KeyError, FileNotFoundError, zipfile.BadZipFile) as err:
             from ...core.session import Session
             LOG.warning("unable to open builtin SVD file: %s", err, exc_info=Session.get_current().log_tracebacks)

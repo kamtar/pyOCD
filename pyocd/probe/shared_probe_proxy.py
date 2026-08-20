@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import logging
+import threading
 
 from .debug_probe import DebugProbe
 from ..core import exceptions
@@ -35,6 +36,7 @@ class SharedDebugProbeProxy(object):
         self._probe = probe
         self._open_count = 0
         self._connect_count = 0
+        self._state_lock = threading.RLock()
 
     @property
     def session(self):
@@ -51,27 +53,35 @@ class SharedDebugProbeProxy(object):
         return self._probe
 
     def open(self):
-        if self._open_count == 0:
-            self._probe.open()
-        self._open_count += 1
+        with self._state_lock:
+            if self._open_count == 0:
+                self._probe.open()
+            self._open_count += 1
 
     def close(self):
-        if self._open_count == 1:
-            self._probe.close()
-        self._open_count -= 1
+        with self._state_lock:
+            if self._open_count == 0:
+                raise exceptions.ProbeError("probe is not open")
+            if self._open_count == 1:
+                self._probe.close()
+            self._open_count -= 1
 
     def connect(self, protocol=None):
-        # First to connect gets to choose the protocol.
-        if self._connect_count == 0:
-            self._probe.connect(protocol)
-        elif protocol not in (DebugProbe.Protocol.DEFAULT, self._probe.wire_protocol):
-            raise exceptions.ProbeError("probe already connected using %s protocol" % self._probe.wire_protocol.name)
-        self._connect_count += 1
+        with self._state_lock:
+            # First to connect gets to choose the protocol.
+            if self._connect_count == 0:
+                self._probe.connect(protocol)
+            elif protocol not in (DebugProbe.Protocol.DEFAULT, self._probe.wire_protocol):
+                raise exceptions.ProbeError("probe already connected using %s protocol" % self._probe.wire_protocol.name)
+            self._connect_count += 1
 
     def disconnect(self):
-        if self._connect_count == 1:
-            self._probe.disconnect()
-        self._connect_count -= 1
+        with self._state_lock:
+            if self._connect_count == 0:
+                raise exceptions.ProbeError("probe is not connected")
+            if self._connect_count == 1:
+                self._probe.disconnect()
+            self._connect_count -= 1
 
     def swj_sequence(self, length, bits):
         self._probe.swj_sequence(length, bits)

@@ -212,32 +212,36 @@ class SWVReader(threading.Thread):
                                     name="SWV raw",
                                     is_read_only=True)
 
-        # Stop SWO first in case the probe already had it started. Ignore if this fails.
         try:
-            self._session.probe.swo_stop()
-        except exceptions.ProbeError:
-            pass
-        self._session.probe.swo_start(self._swo_clock)
+            # Stop SWO first in case the probe already had it started. Ignore if this fails.
+            try:
+                self._session.probe.swo_stop()
+            except exceptions.ProbeError:
+                pass
+            self._session.probe.swo_start(self._swo_clock)
 
-        while not self._shutdown_event.is_set():
-            data = self._session.probe.swo_read()
-            if data:
-                if swv_raw_file:
-                    swv_raw_file.write(data)
-                elif swv_raw_server:
-                    swv_raw_server.write(data)
-                self._parser.parse(data)
+            while not self._shutdown_event.is_set():
+                data = self._session.probe.swo_read()
+                if data:
+                    if swv_raw_file:
+                        swv_raw_file.write(data)
+                    elif swv_raw_server:
+                        swv_raw_server.write(data)
+                    self._parser.parse(data)
 
-            sleep(0.001)
+                sleep(0.001)
+        finally:
+            try:
+                self._session.probe.swo_stop()
+            except exceptions.ProbeError:
+                pass
 
-        self._session.probe.swo_stop()
+            if swv_raw_file:
+                swv_raw_file.flush()
+                swv_raw_file.close()
 
-        if swv_raw_file:
-            swv_raw_file.flush()
-            swv_raw_file.close()
-
-        if swv_raw_server:
-            swv_raw_server.stop()
+            if swv_raw_server:
+                swv_raw_server.stop()
 
     def _reset_handler(self, notification: "Notification") -> None:
         """@brief Reconfigure SWV components after target trace support has restarted."""

@@ -129,7 +129,7 @@ class ADIv5Discovery(CoreSightDiscovery):
 
         ap_list = []
         invalid_count = 0
-        for apsel in range(self.MAX_APSEL):
+        for apsel in range(self.MAX_APSEL + 1):
             try:
                 isValid = AccessPort.probe(self.dp, apsel)
                 if isValid:
@@ -218,14 +218,15 @@ class ADIv6Discovery(CoreSightDiscovery):
     def _find_root_components(self):
         """@brief Read top-level ROM table pointed to by the DP."""
         # There's not much we can do if we don't have a base address.
-        if self.dp.base_address is None:
+        base_address = self.dp.base_address
+        if base_address is None:
             return
 
         # Create a temporary memory interface.
         mem_interface = self.dp.apacc_memory_interface
 
         # Examine the base component.
-        cmpid = CoreSightComponentID(None, mem_interface, self.dp.base_address)
+        cmpid = CoreSightComponentID(None, mem_interface, base_address)
         cmpid.read_id_registers()
         LOG.debug("Base component: %s", cmpid)
 

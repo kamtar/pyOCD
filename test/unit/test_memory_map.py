@@ -110,6 +110,12 @@ class TestRange:
     def test_gt(self):
         assert MemoryRange(1000, length=1000) > MemoryRange(0, length=1000)
 
+    def test_lt_same_start_different_length(self):
+        shorter = MemoryRange(0, length=1)
+        longer = MemoryRange(0, length=2)
+        assert shorter < longer
+        assert longer > shorter
+
     def test_sort(self, ram1, ram2, flash, rom):
         regionList = [ram2, rom, flash, ram1]
         sortedRegionList = sorted(regionList)
