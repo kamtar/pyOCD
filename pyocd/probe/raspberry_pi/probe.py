@@ -21,19 +21,25 @@ LOG = logging.getLogger(__name__)
 class _PendingTransfer:
     """Result holder for a deferred native or portable SWD transaction."""
 
+    __slots__ = (
+        "probe", "is_read", "ap", "addr", "payload", "_descriptor",
+        "result", "error", "done",
+    )
+
     def __init__(self, probe: "RaspberryPiProbe", is_read: bool, ap: bool, addr: int, payload) -> None:
         self.probe = probe
         self.is_read = is_read
         self.ap = ap
         self.addr = addr
         self.payload = payload
+        self._descriptor = (is_read, ap, addr, payload)
         self.result = None
         self.error: Optional[Exception] = None
         self.done = False
 
     @property
     def descriptor(self):
-        return (self.is_read, self.ap, self.addr, self.payload)
+        return self._descriptor
 
     def get(self):
         if not self.done:

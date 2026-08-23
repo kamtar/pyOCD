@@ -35,6 +35,7 @@ typedef struct {
     volatile uint32_t *registers;
     uint64_t half_period_ns;
     double delay_loops_per_ns;
+    double edge_overhead_ns;
 } BCMEngine;
 
 typedef struct {
@@ -166,14 +167,16 @@ static bool init_swd_bus(
      * ordering barrier). Rewriting the high latch is electrically harmless.
      * Subtracting this cost makes the selected frequency describe the complete
      * edge period rather than an extra delay added after GPIO access. */
-    uint64_t start = monotonic_ns();
-    for (unsigned int index = 0; index < GPIO_CALIBRATION_ITERATIONS; ++index) {
-        *bus->swclk_set = bus->swclk_mask;
-        gpio_sync();
+    if (self->edge_overhead_ns < 0.0) {
+        uint64_t start = monotonic_ns();
+        for (unsigned int index = 0; index < GPIO_CALIBRATION_ITERATIONS; ++index) {
+            *bus->swclk_set = bus->swclk_mask;
+            gpio_sync();
+        }
+        uint64_t elapsed = monotonic_ns() - start;
+        self->edge_overhead_ns = (double)elapsed / GPIO_CALIBRATION_ITERATIONS;
     }
-    uint64_t elapsed = monotonic_ns() - start;
-    double edge_overhead_ns = (double)elapsed / GPIO_CALIBRATION_ITERATIONS;
-    double requested_delay_ns = (double)self->half_period_ns - edge_overhead_ns;
+    double requested_delay_ns = (double)self->half_period_ns - self->edge_overhead_ns;
     double delay_iterations = requested_delay_ns * self->delay_loops_per_ns;
     if (requested_delay_ns <= 0.0 || delay_iterations < 1.0) {
         bus->delay_iterations = 0;
@@ -287,6 +290,7 @@ static PyObject *BCMEngine_new(
         self->registers = MAP_FAILED;
         self->half_period_ns = 500;
         self->delay_loops_per_ns = 0.0;
+        self->edge_overhead_ns = -1.0;
     }
     return (PyObject *)self;
 }
@@ -318,6 +322,7 @@ static PyObject *BCMEngine_open(BCMEngine *self, PyObject *args)
         return PyErr_SetFromErrnoWithFilename(PyExc_OSError, device);
     }
     self->delay_loops_per_ns = calibrate_delay_loop();
+    self->edge_overhead_ns = -1.0;
     Py_RETURN_NONE;
 }
 

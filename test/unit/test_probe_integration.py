@@ -188,3 +188,11 @@ def test_deferred_transfer_error_is_raised_before_reading_transport():
 
     with pytest.raises(exceptions.TransferError, match="transfer failed"):
         transfer.get_result()
+
+
+def test_cmsis_dap_block_response_decodes_little_endian_words():
+    transfer = _Transfer(object(), 0, 3, READ, None)
+
+    transfer.add_response(bytes.fromhex("78563412 efcdab90 00000000"))
+
+    assert transfer.get_result() == [0x12345678, 0x90abcdef, 0]

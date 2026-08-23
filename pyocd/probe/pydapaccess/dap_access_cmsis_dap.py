@@ -19,6 +19,7 @@
 import re
 import logging
 import collections
+import struct
 import threading
 from typing import (Any, Dict, Optional, Tuple, Union)
 
@@ -137,12 +138,13 @@ class _Transfer(object):
         that get_data_size returns.
         """
         assert len(data) == self._size_bytes
-        result = []
-        for i in range(0, self._size_bytes, 4):
-            word = ((data[0 + i] << 0) | (data[1 + i] << 8) |
-                    (data[2 + i] << 16) | (data[3 + i] << 24))
-            result.append(word)
-        self._result = result
+        if self.transfer_count:
+            # Decode the complete response in native code instead of rebuilding
+            # every word with four indexed Python operations.
+            self._result = list(struct.unpack_from(
+                f"<{self.transfer_count}I", data))
+        else:
+            self._result = []
 
     def add_error(self, error):
         """@brief Attach an exception to this transfer rather than data.
