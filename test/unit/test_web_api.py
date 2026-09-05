@@ -92,6 +92,28 @@ def test_system_power_route(tmp_path):
     run(scenario())
 
 
+def test_swd_traffic_capture_routes_are_incremental_and_csrf_protected(tmp_path):
+    async def scenario():
+        controller = WebController(str(tmp_path))
+        client = TestClient(TestServer(create_application(controller)))
+        await client.start_server()
+        try:
+            initial = await client.get("/api/v1/swd-traffic")
+            assert initial.status == 200
+            assert (await initial.json())["enabled"] is False
+            enabled = await client.put(
+                "/api/v1/swd-traffic", json={"enabled": True}, headers=CSRF)
+            assert (await enabled.json())["enabled"] is True
+            denied = await client.delete("/api/v1/swd-traffic")
+            assert denied.status == 403
+            cleared = await client.delete("/api/v1/swd-traffic", headers=CSRF)
+            assert cleared.status == 200
+            assert (await cleared.json())["transactions"] == []
+        finally:
+            await client.close()
+    run(scenario())
+
+
 def test_runtime_restart_route_schedules_process_replacement(tmp_path):
     async def scenario():
         controller = WebController(str(tmp_path))

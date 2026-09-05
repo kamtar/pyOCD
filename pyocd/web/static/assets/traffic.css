@@ -1,0 +1,68 @@
+#traffic .traffic-heading-actions { align-items: flex-start; }
+#traffic .traffic-toggle { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 10px; background: #10271b; cursor: pointer; }
+#traffic .traffic-toggle input { accent-color: var(--cyan); width: 17px; height: 17px; }
+#traffic .traffic-toggle span { display: flex; flex-direction: column; gap: 2px; }
+#traffic .traffic-toggle small { color: var(--muted); font-size: 10px; }
+.traffic-overview { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; margin-bottom: 18px; }
+.traffic-stats { display: flex; flex-wrap: wrap; gap: 8px; }
+.traffic-stat { min-width: 120px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #0d2118; }
+.traffic-stat small { display: block; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-size: 9px; }
+.traffic-stat b { display: block; margin-top: 5px; color: var(--cyan); font: 700 16px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.traffic-groups { display: grid; gap: 10px; }
+.traffic-group { border: 1px solid var(--line); border-radius: 12px; background: #0b1c14; overflow: hidden; }
+.traffic-group > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px; padding: 14px 16px; cursor: pointer; list-style: none; }
+.traffic-group > summary::-webkit-details-marker { display: none; }
+.traffic-group > summary::before { content: '▸'; color: var(--cyan); transition: transform .15s ease; }
+.traffic-group[open] > summary::before { transform: rotate(90deg); }
+.traffic-group-title { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.traffic-group-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.traffic-group-title small, .traffic-group-meta { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.traffic-group-meta { white-space: nowrap; }
+.traffic-table-wrap { overflow: auto; border-top: 1px solid var(--line); max-height: 560px; }
+.traffic-table { width: 100%; border-collapse: collapse; min-width: 720px; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.traffic-table th { position: sticky; top: 0; z-index: 1; padding: 9px 12px; color: var(--muted); background: #101f18; text-align: left; text-transform: uppercase; letter-spacing: .06em; font-size: 9px; }
+.traffic-table td { padding: 9px 12px; border-top: 1px solid #173024; vertical-align: top; white-space: nowrap; }
+.traffic-table td.data { max-width: 430px; overflow: hidden; text-overflow: ellipsis; color: #d7efe2; }
+.traffic-table td.address { color: var(--blue); }
+.traffic-table td.error, .traffic-table .failed { color: var(--red); }
+.traffic-empty { padding: 42px 20px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); text-align: center; }
+@media (max-width: 700px) {
+  .traffic-overview { grid-template-columns: 1fr; }
+  .traffic-stat { flex: 1 1 110px; }
+  #traffic .traffic-heading-actions { width: 100%; }
+  #traffic .traffic-toggle { flex: 1 1 auto; }
+  nav button[data-tab="traffic"]::after { content: "SWD"; }
+}
+
+#nav button[data-tab="traffic"] {
+  color: #737f8c;
+  opacity: .78;
+}
+#nav button[data-tab="traffic"]:hover { color: #a5afba; opacity: 1; }
+#nav button[data-tab="traffic"].active {
+  color: #aab4bf;
+  background: #111d29;
+  border-color: #33414e;
+  box-shadow: inset 3px 0 #6d7885;
+}
+#traffic .heading em { color: #7e8995; }
+#traffic .heading h1 { color: #aeb8c2; }
+#traffic .heading p { color: #778391; }
+#traffic .traffic-toggle { color: #a0aab5; background: #111a23; border-color: #303d4a; }
+#traffic .traffic-toggle b { color: #a8b2bd; }
+
+@media (min-width: 901px) {
+  #nav button[data-tab="traffic"] {
+    margin-top: 14px;
+    padding-top: 18px;
+    border-top: 1px solid #33414e;
+  }
+}
+
+@media (max-width: 600px) {
+  #nav button[data-tab="traffic"] {
+    margin-left: 5px;
+    padding-left: 10px;
+    border-left: 1px solid #33414e;
+  }
+}

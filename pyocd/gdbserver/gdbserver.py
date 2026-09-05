@@ -16,6 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
 import logging
 import threading
 from time import sleep
@@ -594,6 +595,20 @@ class GDBServer(threading.Thread):
         finally:
             LOG.debug("GDB server on port %d exiting", self.port)
             self._cleanup()
+
+    def _traffic_memory_scope(self, operation: str, address: int, length: int):
+        traffic = getattr(getattr(self.session, "context_state", None), "swd_traffic", None)
+        if traffic is None:
+            return nullcontext()
+        memory_map = getattr(self.board.target, "memory_map", None)
+        get_region = getattr(memory_map, "get_region_for_address", None)
+        region = get_region(address) if callable(get_region) else None
+        kind = ("flash" if getattr(region, "is_flash", False)
+                else "RAM" if getattr(region, "is_ram", False) else "memory")
+        return traffic.operation(
+            f"{operation} {kind}", f"memory_{operation.lower()}_{kind.lower()}",
+            {"address": f"0x{address:08x}", "length": length,
+             "region": getattr(region, "name", None)})
 
     def notify_client_detached(self, client: GDBClientSession):
         """
@@ -1174,10 +1189,11 @@ class GDBServer(threading.Thread):
         TRACE_MEM.debug("Command: Read memory (addr=0x%08x, len=%d)", addr, length)
 
         try:
-            mem = self.target_context.read_memory_block8(addr, length)
-            # Flush so an exception is thrown now if invalid memory was accesses
-            self.target_context.flush()
-            val = hex_encode(bytearray(mem))
+            with self._traffic_memory_scope("Read", addr, length):
+                mem = self.target_context.read_memory_block8(addr, length)
+                # Flush so an exception is thrown now if invalid memory was accesses
+                self.target_context.flush()
+                val = hex_encode(bytearray(mem))
         except exceptions.TransferError as e:
             LOG.debug("Command: Read memory (addr=0x%08x, len=%d): Error = %s", addr, length, str(e))
             val = b'E01' #EPERM
@@ -1196,11 +1212,12 @@ class GDBServer(threading.Thread):
         TRACE_MEM.debug("Command: Write memory hex (addr=0x%08x, len=%d)", addr, length)
 
         try:
-            if length > 0:
-                self.target_context.write_memory_block8(addr, data)
-                # Flush so an exception is thrown now if invalid memory was accessed
-                self.target_context.flush()
-            resp = b"OK"
+            with self._traffic_memory_scope("Write", addr, length):
+                if length > 0:
+                    self.target_context.write_memory_block8(addr, data)
+                    # Flush so an exception is thrown now if invalid memory was accessed
+                    self.target_context.flush()
+                resp = b"OK"
         except exceptions.TransferError as e:
             LOG.debug("Command: Write memory hex (addr=0x%08x, len=%d): Error = %s", addr, length, str(e))
             resp = b'E01' #EPERM
@@ -1219,11 +1236,12 @@ class GDBServer(threading.Thread):
         TRACE_MEM.debug("Command: Write memory (addr=0x%08x, len=%d)", addr, length)
 
         try:
-            if length > 0:
-                self.target_context.write_memory_block8(addr, data)
-                # Flush so an exception is thrown now if invalid memory was accessed
-                self.target_context.flush()
-            resp = b"OK"
+            with self._traffic_memory_scope("Write", addr, length):
+                if length > 0:
+                    self.target_context.write_memory_block8(addr, data)
+                    # Flush so an exception is thrown now if invalid memory was accessed
+                    self.target_context.flush()
+                resp = b"OK"
         except exceptions.TransferError as e:
             LOG.debug("Command: Write memory (addr=0x%08x, len=%d): Error = %s", addr, length, str(e))
             resp = b'E01' #EPERM
@@ -1545,22 +1563,26 @@ class GDBServer(threading.Thread):
         return -1, 0
 
     def get_t_response(self, client, forceSignal=None):
-        if self.is_threading_enabled():
-            currentThread = self.thread_provider.current_thread
-            currentThreadId = currentThread.unique_id
-            client.target_facade.set_context(currentThread.context)
-        else:
-            currentThreadId = 1
-            client.target_facade.set_context(self.target_context)
+        traffic = getattr(getattr(self.session, "context_state", None), "swd_traffic", None)
+        scope = (traffic.operation("Stop response", "stop")
+                 if traffic is not None else nullcontext())
+        with scope:
+            if self.is_threading_enabled():
+                currentThread = self.thread_provider.current_thread
+                currentThreadId = currentThread.unique_id
+                client.target_facade.set_context(currentThread.context)
+            else:
+                currentThreadId = 1
+                client.target_facade.set_context(self.target_context)
 
-        response  = client.target_facade.get_t_response(forceSignal)
-        response += ("thread:%x;" % currentThreadId).encode()
+            response  = client.target_facade.get_t_response(forceSignal)
+            response += ("thread:%x;" % currentThreadId).encode()
 
-        # Optionally append core
-        if self.report_core:
-            response += ("core:%x;" % self.core).encode()
-        LOG.debug("Stop reply: %s", to_str_safe(response))
-        return response
+            # Optionally append core
+            if self.report_core:
+                response += ("core:%x;" % self.core).encode()
+            LOG.debug("Stop reply: %s", to_str_safe(response))
+            return response
 
     def get_threads_xml(self):
         root = Element('threads')

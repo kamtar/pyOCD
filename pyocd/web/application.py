@@ -360,6 +360,18 @@ def create_application(
         ctrl.clear_logs()
         return web.Response(status=204)
 
+    async def swd_traffic(request):
+        if request.method == "GET":
+            return web.json_response(await asyncio.to_thread(
+                ctrl.swd_traffic,
+                int(request.query.get("after", 0)),
+                int(request.query.get("limit", 500))))
+        if request.method == "PUT":
+            data = await body(request)
+            return web.json_response(await asyncio.to_thread(
+                ctrl.set_swd_traffic, bool(data.get("enabled", False))))
+        return web.json_response(await asyncio.to_thread(ctrl.clear_swd_traffic))
+
     async def events(request):
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
@@ -415,6 +427,9 @@ def create_application(
         web.post("/api/v1/console",
                  console), web.get("/api/v1/logs", logs),
         web.delete("/api/v1/logs", clear_logs),
+        web.get("/api/v1/swd-traffic", swd_traffic),
+        web.put("/api/v1/swd-traffic", swd_traffic),
+        web.delete("/api/v1/swd-traffic", swd_traffic),
         web.get("/api/v1/ws/events", events),
     ]
     app.add_routes(routes)

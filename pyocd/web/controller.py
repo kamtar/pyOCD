@@ -43,6 +43,7 @@ from ..tools.lists import ListGenerator
 from ..target.pack import pack_target
 from ..target.family.target_kinetis import Kinetis
 from ..target import TARGET
+from ..utility.swd_traffic import SwdTrafficRecorder
 from .gdb_mi import GdbMiClient, GdbMiError, MiRecord, quote_mi
 
 try:
@@ -174,6 +175,9 @@ class WebController:
         self._serve_local_only = serve_local_only
         self._force_rpi = force_rpi
         self._target_locked: Optional[bool] = None
+        # The recorder is session-independent so the browser can enable it
+        # before connecting and retain a bounded history across reconnects.
+        self._swd_traffic = SwdTrafficRecorder()
         # Capture static connection details once. Some remote probes implement property
         # reads as transport requests, so flash jobs must serve polling from this cache.
         self._session_metadata: Optional[Dict[str, Any]] = None
@@ -252,6 +256,18 @@ class WebController:
     def clear_logs(self) -> None:
         with self._lock:
             self._log_handler.records.clear()
+
+    def swd_traffic(self, after: int = 0, limit: int = 500) -> Dict[str, Any]:
+        """Return an incremental batch of captured SWD traffic."""
+        return self._swd_traffic.snapshot(after, limit)
+
+    def set_swd_traffic(self, enabled: bool) -> Dict[str, Any]:
+        self._swd_traffic.set_enabled(enabled)
+        return self._swd_traffic.snapshot()
+
+    def clear_swd_traffic(self) -> Dict[str, Any]:
+        self._swd_traffic.clear()
+        return self._swd_traffic.snapshot()
 
     @staticmethod
     def _memory_info() -> Dict[str, Optional[int]]:
@@ -427,6 +443,7 @@ class WebController:
                 "profile": self._profile,
                 "connection_defaults": self.CONNECTION_DEFAULTS,
                 "connected": self._session is not None and self._session.is_open,
+                "swd_traffic": self._swd_traffic.summary(),
                 "gdb": [{"core": c, "port": s.port, "running": s.is_alive(),
                          "clients": len(s.client_sessions),
                          "client_addresses": [str(client.remote_address)
@@ -775,6 +792,25 @@ class WebController:
         self._invalidate_target_catalog()
         return {"installed": True, "device": name, "packs": [str(ref) for ref in refs]}
 
+    def _attach_swd_traffic(self, session: Session) -> None:
+        """Attach capture to a session without making it a Session dependency."""
+        context_state = getattr(session, "context_state", None)
+        if context_state is not None:
+            context_state.swd_traffic = self._swd_traffic
+        subscribe = getattr(session, "subscribe", None)
+        if callable(subscribe):
+            subscribe(
+                self._swd_traffic.handle_notification,
+                tuple(event for event in Target.Event
+                      if event.name.startswith("PRE_") or event.name.startswith("POST_")))
+        self._swd_traffic.bind_probe(getattr(session, "probe", None))
+
+    def _detach_swd_traffic(self, session: Optional[Session]) -> None:
+        if session is None:
+            return
+        self._swd_traffic.finish_thread_groups()
+        self._swd_traffic.unbind_probe(getattr(session, "probe", None))
+
     def connect(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(profile, dict):
             raise WebError("invalid_profile", "Connection profile must be a JSON object")
@@ -825,7 +861,10 @@ class WebController:
                     if key in gpio:
                         options["rpi_gpio." + key] = gpio[key]
                 session = Session(probe, options=options)
-                session.open()
+                self._attach_swd_traffic(session)
+                with self._swd_traffic.operation(
+                        "Connect", "connect", {"target": target_override}):
+                    session.open()
                 # Kinetis MDM-AP halting is not persistent on parts whose
                 # watchdog continues across the initial debug handoff. Do
                 # an explicit reset-and-halt before exposing the session to
@@ -851,6 +890,7 @@ class WebController:
                     self._session.close()
                 elif session:
                     session.close()
+                self._detach_swd_traffic(session)
                 self._session, self._console = None, None
                 self._session_metadata = None
                 raise
@@ -909,8 +949,11 @@ class WebController:
 
     def _disconnect_locked(self) -> None:
         self._stop_gdb_locked()
-        if self._session:
-            self._session.close()
+        session = self._session
+        if session:
+            with self._swd_traffic.operation("Detach / disconnect", "detach"):
+                session.close()
+            self._detach_swd_traffic(session)
         self._session, self._console = None, None
         self._target_locked = None
         self._session_metadata = None
@@ -1081,7 +1124,17 @@ class WebController:
                     return data
                 except (GdbMiError, ValueError) as exc:
                     raise WebError("gdb_memory_failed", str(exc), 409) from exc
-            data = bytes(self._require_exclusive().target.read_memory_block8(address, length))
+            session = self._require_exclusive()
+            memory_map = getattr(session.target, "memory_map", None)
+            get_region = getattr(memory_map, "get_region_for_address", None)
+            region = get_region(address) if callable(get_region) else None
+            region_kind = ("flash" if getattr(region, "is_flash", False)
+                           else "RAM" if getattr(region, "is_ram", False) else "memory")
+            with self._swd_traffic.operation(
+                    f"Read {region_kind}", f"memory_read_{region_kind.lower()}",
+                    {"address": f"0x{address:08x}", "length": length,
+                     "region": getattr(region, "name", None)}):
+                data = bytes(session.target.read_memory_block8(address, length))
             if len(data) != length:
                 raise WebError(
                     "memory_read_failed",
@@ -1190,7 +1243,12 @@ class WebController:
             handler = JobLogHandler(job, self._lock)
             logging.getLogger("pyocd").addHandler(handler)
             try:
-                fn(job)
+                if kind in ("erase", "program", "verify"):
+                    with self._swd_traffic.operation(
+                            f"Flash {kind}", f"flash_{kind}", {"job_id": job.id}):
+                        fn(job)
+                else:
+                    fn(job)
                 with self._lock:
                     job.progress, job.state, job.message = 1.0, "completed", "Completed"
                     job.events.append({"time": time.time(), "level": "INFO",

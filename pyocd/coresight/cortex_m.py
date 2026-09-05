@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import logging
 from time import sleep
 from typing import (Any, Callable, List, Optional, Set, Tuple, overload, Sequence, TYPE_CHECKING, Union, cast)
@@ -1530,11 +1531,21 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         @retval True Breakpoint was set.
         @retval False Breakpoint could not be set.
         """
-        return self.bp_manager.set_breakpoint(addr, type)
+        traffic = getattr(getattr(self.session, "context_state", None), "swd_traffic", None)
+        scope = (traffic.operation("Breakpoint set", "breakpoint",
+                                   {"address": f"0x{addr:08x}", "type": getattr(type, "name", str(type))})
+                 if traffic is not None else nullcontext())
+        with scope:
+            return self.bp_manager.set_breakpoint(addr, type)
 
     def remove_breakpoint(self, addr: int) -> None:
         """@brief Remove a breakpoint at a specific location."""
-        self.bp_manager.remove_breakpoint(addr)
+        traffic = getattr(getattr(self.session, "context_state", None), "swd_traffic", None)
+        scope = (traffic.operation("Breakpoint remove", "breakpoint",
+                                   {"address": f"0x{addr:08x}"})
+                 if traffic is not None else nullcontext())
+        with scope:
+            self.bp_manager.remove_breakpoint(addr)
 
     def get_breakpoint_type(self, addr: int) -> Target.BreakpointType:
         return self.bp_manager.get_breakpoint_type(addr)
@@ -1550,14 +1561,26 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
     def set_watchpoint(self, addr: int, size: int, type: Target.WatchpointType) -> Optional[bool]:
         """@brief Set a hardware watchpoint.
         """
-        if self.dwt is not None:
-            return self.dwt.set_watchpoint(addr, size, type)
+        traffic = getattr(getattr(self.session, "context_state", None), "swd_traffic", None)
+        scope = (traffic.operation("Watchpoint set", "watchpoint",
+                                   {"address": f"0x{addr:08x}", "size": size,
+                                    "type": getattr(type, "name", str(type))})
+                 if traffic is not None else nullcontext())
+        with scope:
+            if self.dwt is not None:
+                return self.dwt.set_watchpoint(addr, size, type)
 
     def remove_watchpoint(self, addr: int, size: Optional[int] = None, type: Optional[Target.WatchpointType] = None) -> None:
         """@brief Remove a hardware watchpoint.
         """
-        if self.dwt is not None:
-            return self.dwt.remove_watchpoint(addr, size, type)
+        traffic = getattr(getattr(self.session, "context_state", None), "swd_traffic", None)
+        scope = (traffic.operation("Watchpoint remove", "watchpoint",
+                                   {"address": f"0x{addr:08x}", "size": size,
+                                    "type": getattr(type, "name", None)})
+                 if traffic is not None else nullcontext())
+        with scope:
+            if self.dwt is not None:
+                return self.dwt.remove_watchpoint(addr, size, type)
 
     def get_watchpoint_hit(self):
         """Return the type and watched address of a matching DWT comparator."""
@@ -1631,6 +1654,14 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
 
     def is_debug_trap(self) -> bool:
         debugEvents = self.read_memory(CortexM.DFSR) & (CortexM.DFSR_DWTTRAP | CortexM.DFSR_BKPT | CortexM.DFSR_HALTED)
+        traffic = getattr(getattr(self.session, "context_state", None), "swd_traffic", None)
+        if traffic is not None and debugEvents:
+            if debugEvents & CortexM.DFSR_DWTTRAP:
+                traffic.annotate_current_group("Watchpoint hit", "watchpoint")
+            elif debugEvents & CortexM.DFSR_BKPT:
+                traffic.annotate_current_group("Breakpoint hit", "breakpoint")
+            else:
+                traffic.annotate_current_group("Stop / halt", "halt")
         return debugEvents != 0
 
     def is_vector_catch(self) -> bool:
