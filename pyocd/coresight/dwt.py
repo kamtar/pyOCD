@@ -51,6 +51,7 @@ class DWT(CoreSightComponent):
     DWT_COMP_BASE = 0x00000020
     DWT_MASK_OFFSET = 4
     DWT_FUNCTION_OFFSET = 8
+    DWT_FUNCTION_MATCHED = 1 << 24
     DWT_COMP_BLOCK_SIZE = 0x10
 
     DWT_CTRL_NUM_COMP_MASK = (0xF << 28)
@@ -90,6 +91,7 @@ class DWT(CoreSightComponent):
         self.watchpoints = []
         self.watchpoint_used = 0
         self.dwt_configured = False
+        self._matched_watchpoints = None
 
     @property
     def watchpoint_count(self):
@@ -157,6 +159,7 @@ class DWT(CoreSightComponent):
                 watch.func = function
                 watch.size = size
                 self.watchpoint_used += 1
+                self._matched_watchpoints = None
                 return True
 
         LOG.error('No more watchpoints are available, dropped watchpoint at 0x%08x', addr)
@@ -175,6 +178,7 @@ class DWT(CoreSightComponent):
                 watch.func = 0
                 self.ap.write_memory(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET, 0)
                 self.watchpoint_used -= 1
+                self._matched_watchpoints = None
 
     def remove_all_watchpoints(self):
         for watch in self.watchpoints:
@@ -183,6 +187,26 @@ class DWT(CoreSightComponent):
 
     def get_watchpoints(self):
         return [watch for watch in self.watchpoints if watch.func != 0]
+
+    def clear_watchpoint_matches(self):
+        """Discard old read-to-clear MATCHED bits before execution resumes."""
+        for watch in self.watchpoints:
+            if watch.func:
+                self.ap.read32(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET)
+        self._matched_watchpoints = None
+
+    def get_matched_watchpoints(self):
+        """Capture match status once so repeated stop queries give the same answer."""
+        if self._matched_watchpoints is None:
+            matches = []
+            for watch in self.watchpoints:
+                if (watch.func and self.ap.read32(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET)
+                        & self.DWT_FUNCTION_MATCHED):
+                    logical = getattr(watch, 'logical_watchpoint', watch)
+                    if logical not in matches:
+                        matches.append(logical)
+            self._matched_watchpoints = matches
+        return self._matched_watchpoints
 
     @property
     def cycle_count(self):
@@ -220,40 +244,92 @@ class DWTv2(DWT):
                         4: (2 << 10),
                     }
 
-    def set_watchpoint(self, addr, size, type):
-        """@brief Set a hardware watchpoint."""
-        if self.dwt_configured is False:
-            self.init()
+    def __init__(self, ap, cmpid=None, addr=None):
+        super().__init__(ap, cmpid, addr)
+        self._watchpoint_groups = {}
 
-        watch = self.find_watchpoint(addr, size, type)
-        if watch is not None:
+    def find_watchpoint(self, addr, size, type):
+        return self._watchpoint_groups.get((addr, size, type))
+
+    def set_watchpoint(self, addr, size, type):
+        """Cover a range using aligned 1-, 2-, or 4-byte comparator matches."""
+        if type not in (Target.WatchpointType.READ, Target.WatchpointType.WRITE,
+                        Target.WatchpointType.READ_WRITE):
+            return False
+        if size <= 0 or addr < 0 or addr + size > 0x100000000:
+            return False
+        if not self.dwt_configured:
+            self.init()
+        if self.find_watchpoint(addr, size, type) is not None:
             return True
 
-        if type not in self.WATCH_TYPE_TO_FUNCT:
-            LOG.error("Invalid watchpoint type %i", type)
-            return False
+        free = [watch for watch in self.watchpoints if not watch.func]
+        parts = []
+        current, remaining = addr, size
+        while remaining:
+            if len(parts) == len(free):
+                LOG.error('Not enough comparators for watchpoint range at 0x%08x', addr)
+                return False
+            width = next(n for n in (4, 2, 1) if current % n == 0 and remaining >= n)
+            parts.append((current, width))
+            current += width
+            remaining -= width
 
-        # Only support sizes that can be handled with a single comparator.
-        if size not in (1, 2, 4):
-            LOG.error("Invalid watchpoint size %d", size)
-            return False
-
-        for watch in self.watchpoints:
-            if watch.func == 0:
-                watch.addr = addr
-                watch.func = self.WATCH_TYPE_TO_FUNCT[type]
-                watch.size = size
-
-                # Build FUNCTIONn register value.
-                value = self.DATAVSIZE_MAP[size] | self.DWT_ACTION_DEBUG_EVENT | watch.func
-
-                self.ap.write_memory(watch.comp_register_addr, addr)
+        logical = Watchpoint(free[0].comp_register_addr, self)
+        logical.addr, logical.size = addr, size
+        logical.func = self.WATCH_TYPE_TO_FUNCT[type]
+        logical.parts = free[:len(parts)]
+        touched = []
+        supported = True
+        try:
+            for watch, (address, width) in zip(logical.parts, parts):
+                touched.append(watch)
+                self.ap.write_memory(watch.comp_register_addr, address)
+                value = self.DATAVSIZE_MAP[width] | self.DWT_ACTION_DEBUG_EVENT | logical.func
                 self.ap.write_memory(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET, value)
-                self.watchpoint_used += 1
-                return True
+                # Read back writable fields: comparator capabilities vary by implementation.
+                actual = self.ap.read32(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET)
+                if actual & 0xc3f != value:
+                    supported = False
+                    break
+        except Exception:
+            for watch in touched:
+                self.ap.write_memory(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET, 0)
+            self.ap.read32(touched[-1].comp_register_addr + self.DWT_FUNCTION_OFFSET)
+            raise
 
-        LOG.error('No more watchpoints are available, dropped watchpoint at 0x%08x', addr)
-        return False
+        if not supported:
+            for watch in touched:
+                self.ap.write_memory(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET, 0)
+            self.ap.read32(touched[-1].comp_register_addr + self.DWT_FUNCTION_OFFSET)
+            LOG.error('Comparator does not support the requested watchpoint mode')
+            return False
 
+        for watch, (address, width) in zip(logical.parts, parts):
+            watch.addr, watch.size, watch.func = address, width, logical.func
+            watch.logical_watchpoint = logical
+        self._watchpoint_groups[(addr, size, type)] = logical
+        self.watchpoint_used += len(parts)
+        self._matched_watchpoints = None
+        return True
 
+    def remove_watchpoint(self, addr, size=None, type=None):
+        for key, logical in list(self._watchpoint_groups.items()):
+            if key[0] != addr or (size is not None and key[1] != size) or (type is not None and key[2] != type):
+                continue
+            for watch in logical.parts:
+                self.ap.write_memory(watch.comp_register_addr + self.DWT_FUNCTION_OFFSET, 0)
+            self.ap.read32(logical.parts[-1].comp_register_addr + self.DWT_FUNCTION_OFFSET)
+            for watch in logical.parts:
+                watch.func = 0
+                del watch.logical_watchpoint
+            self.watchpoint_used -= len(logical.parts)
+            del self._watchpoint_groups[key]
+        self._matched_watchpoints = None
 
+    def remove_all_watchpoints(self):
+        for addr, size, kind in list(self._watchpoint_groups):
+            self.remove_watchpoint(addr, size, kind)
+
+    def get_watchpoints(self):
+        return list(self._watchpoint_groups.values())

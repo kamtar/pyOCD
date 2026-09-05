@@ -595,7 +595,8 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         """@brief Write a single memory location.
 
         By default the transfer size is a word."""
-        self.ap.write_memory(addr, data, transfer_size)
+        with self.bp_manager.filter_memory_write(addr, transfer_size, [data]) as values:
+            self.ap.write_memory(addr, values[0], transfer_size)
 
     @overload
     def read_memory(self, addr: int, transfer_size: int = 32) -> int:
@@ -637,11 +638,13 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
 
     def write_memory_block8(self, addr: int, data: Sequence[int]) -> None:
         """@brief Write a block of unaligned bytes in memory."""
-        self.ap.write_memory_block8(addr, data)
+        with self.bp_manager.filter_memory_write(addr, 8, data) as values:
+            self.ap.write_memory_block8(addr, values)
 
     def write_memory_block32(self, addr: int, data: Sequence[int]) -> None:
         """@brief Write an aligned block of 32-bit words."""
-        self.ap.write_memory_block32(addr, data)
+        with self.bp_manager.filter_memory_write(addr, 32, data) as values:
+            self.ap.write_memory_block32(addr, values)
 
     def read_memory_block32(self, addr: int, size: int) -> Sequence[int]:
         """@brief Read an aligned block of 32-bit words."""
@@ -679,8 +682,8 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
 
         @param self The object.
         @param disable_interrupts Boolean specifying whether to mask interrupts during the step.
-        @param start Integer start address for range stepping. Not included in the range.
-        @param end Integer end address for range stepping. The range is inclusive of this address.
+        @param start Integer start address for range stepping, included in the range.
+        @param end Integer end address for range stepping, excluded from the range.
         @param hook_cb Optional callable taking no parameters and returning a boolean. The signature is
             `hook_cb() -> bool`. Invoked repeatedly while waiting for step operations to complete. If the
             callback returns True, then stepping is stopped immediately.
@@ -692,9 +695,8 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         dhcsr = self.read32(CortexM.DHCSR)
         if not (dhcsr & CortexM.C_DEBUGEN):
             raise exceptions.DebugError('cannot step: debug not enabled')
-        if not (dhcsr & CortexM.C_HALT):
-            LOG.error('cannot step: core not halted')
-            return
+        if not (dhcsr & CortexM.S_HALT):
+            raise exceptions.DebugError('cannot step: core not halted')
 
         if start != end:
             LOG.debug("step core %d (start=%#010x, end=%#010x)", self.core_number, start, end)
@@ -717,55 +719,64 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         if disable_interrupts:
             dhcsr_step |= CortexM.C_MASKINTS
 
-        # Update mask interrupts setting - C_HALT must be set when changing to C_MASKINTS.
-        if maskints_differs:
-            self.write32(CortexM.DHCSR, dhcsr_step | CortexM.C_HALT)
-
-        # Get the step timeout. A timeout of 0 means no timeout, so we have to pass None to the Timeout class.
         step_timeout = self.session.options.get('cpu.step.instruction.timeout') or None
+        try:
+            # C_HALT must be set when changing C_MASKINTS.
+            if maskints_differs:
+                self.write32(CortexM.DHCSR, dhcsr_step | CortexM.C_HALT)
 
-        exit_step_loop = False
-        while True:
-            # Single step using current C_MASKINTS setting
-            self.write32(CortexM.DHCSR, dhcsr_step)
+            while True:
+                # PRE_RUN has flushed pending breakpoint changes. Temporarily remove
+                # only a software breakpoint at the instruction being executed.
+                with self.bp_manager.step_over_breakpoint():
+                    cancelled = self._step_instruction(dhcsr_step, step_timeout, hook_cb)
 
-            # Wait for halt to auto set.
-            #
-            # Note that it may take a very long time for this loop to exit in cases such as stepping over
-            # a branch into the Secure world where the debugger doesn't have secure debug access, or similar
-            # for Privileged code in the case of UDE.
-            with timeout.Timeout(step_timeout) as tmo:
-                while tmo.check():
-                    # Invoke the callback if provided. If it returns True, then exit the loop.
-                    if (hook_cb is not None) and hook_cb():
-                        exit_step_loop = True
-                        break
-                    if (self.read32(CortexM.DHCSR) & CortexM.C_HALT) != 0:
-                        break
-
-            # Range is empty, 'range step' will degenerate to 'step'
-            if (start == end) or exit_step_loop:
-                break
-
-            # Read program counter and compare to [start, end)
-            program_counter = self.read_core_register_raw('pc')
-            if (program_counter < start) or (end <= program_counter):
-                break
-
-            # Check for stop reasons other than HALTED, which will have been set by our step action.
-            if (self.read32(CortexM.DFSR) & ~CortexM.DFSR_HALTED) != 0:
-                break
-
-        # Restore interrupt mask state.
-        if maskints_differs:
-            self.write32(CortexM.DHCSR,
-                    CortexM.DBGKEY | CortexM.C_DEBUGEN | CortexM.C_HALT | saved_maskints | saved_pmov)
+                if start == end or cancelled:
+                    break
+                pc = self.read_core_register_raw('pc')
+                if not start <= pc < end:
+                    break
+                if self.read32(CortexM.DFSR) & ~CortexM.DFSR_HALTED:
+                    break
+                # A range step must not silently step through a user breakpoint.
+                if self.find_breakpoint(pc) is not None:
+                    break
+        finally:
+            if maskints_differs and self.read32(CortexM.DHCSR) & CortexM.S_HALT:
+                self.write32(CortexM.DHCSR,
+                        CortexM.DBGKEY | CortexM.C_DEBUGEN | CortexM.C_HALT | saved_maskints | saved_pmov)
+                self.flush()
 
         self.flush()
-
         self.session.notify(Target.Event.POST_RUN, self, Target.RunType.STEP)
 
+    def _step_instruction(self, dhcsr_step, step_timeout, hook_cb):
+        """Execute one instruction, leaving the core halted even on cancellation."""
+        halted = False
+        try:
+            self.write32(CortexM.DHCSR, dhcsr_step)
+            with timeout.Timeout(step_timeout) as tmo:
+                while tmo.check():
+                    if hook_cb is not None and hook_cb():
+                        return True
+                    if self.read32(CortexM.DHCSR) & CortexM.S_HALT:
+                        halted = True
+                        return False
+            raise exceptions.TimeoutError("instruction step timed out")
+        finally:
+            if not halted:
+                self.write32(CortexM.DHCSR, (dhcsr_step & ~CortexM.C_STEP) | CortexM.C_HALT)
+                # Recovery itself must remain bounded, even if stepping has no timeout.
+                with timeout.Timeout(self.session.options.get('reset.halt_timeout')) as tmo:
+                    while tmo.check():
+                        if self.read32(CortexM.DHCSR) & CortexM.S_HALT:
+                            break
+                    else:
+                        raise exceptions.TimeoutError("could not halt core after interrupted step")
+
     def clear_debug_cause_bits(self) -> None:
+        if self.dwt is not None:
+            self.dwt.clear_watchpoint_matches()
         self.write32(CortexM.DFSR,
                 CortexM.DFSR_EXTERNAL
                 | CortexM.DFSR_VCATCH
@@ -1547,6 +1558,16 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         """
         if self.dwt is not None:
             return self.dwt.remove_watchpoint(addr, size, type)
+
+    def get_watchpoint_hit(self):
+        """Return the type and watched address of a matching DWT comparator."""
+        # HALTED can be set alongside DWTTRAP during a single step.
+        if self.dwt is not None and self.read32(CortexM.DFSR) & CortexM.DFSR_DWTTRAP:
+            matches = self.dwt.get_matched_watchpoints()
+            if matches:
+                watch = matches[0]
+                return self.dwt.WATCH_TYPE_TO_FUNCT[watch.func], watch.addr
+        return None
 
     @staticmethod
     def _map_to_vector_catch_mask(mask: int) -> int:

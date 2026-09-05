@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import logging
+from contextlib import contextmanager
 from typing import (Dict, Optional, TYPE_CHECKING)
 
 from .provider import (Breakpoint, BreakpointProvider)
@@ -72,8 +73,9 @@ class SoftwareBreakpointProvider(BreakpointProvider):
             instr = self._core.read16(addr)
 
             # Insert BKPT #0 instruction.
-            self._core.write16(addr, self.BKPT_INSTR)
+            self._core.ap.write16(addr, self.BKPT_INSTR)
             self._core.invalidate_instruction_cache(addr)
+            self._core.flush()
 
             # Create bp object.
             bp = SoftwareBreakpoint(self)
@@ -93,13 +95,38 @@ class SoftwareBreakpointProvider(BreakpointProvider):
 
         try:
             # Restore original instruction.
-            self._core.write16(bp.addr, bp.original_instr)
+            self._core.ap.write16(bp.addr, bp.original_instr)
             self._core.invalidate_instruction_cache(bp.addr)
+            self._core.flush()
 
             # Remove from our list.
             del self._breakpoints[bp.addr]
         except exceptions.TransferError:
             LOG.debug("Failed to remove sw bp at 0x%x" % bp.addr)
+            raise
+
+    @contextmanager
+    def suspend_breakpoint(self, bp: SoftwareBreakpoint):
+        """Suspend a breakpoint without losing its original instruction or ownership."""
+        bp.enabled = False
+        try:
+            self._core.ap.write16(bp.addr, bp.original_instr)
+            self._core.invalidate_instruction_cache(bp.addr)
+            self._core.flush()
+            yield
+        finally:
+            # Never patch executable memory while a failed step is still running.
+            if not self._core.is_halted():
+                raise exceptions.DebugError("cannot restore software breakpoint: core is not halted")
+            self._core.ap.write16(bp.addr, self.BKPT_INSTR)
+            self._core.invalidate_instruction_cache(bp.addr)
+            self._core.flush()
+            bp.enabled = True
+
+    def flush(self) -> None:
+        # A failed recovery must not silently allow execution with a missing breakpoint.
+        if any(not bp.enabled for bp in self._breakpoints.values()):
+            raise exceptions.DebugError("software breakpoint recovery failed; remove the breakpoint before running")
 
     def filter_memory(self, addr: int, size: int, data: int) -> int:
         for bp in self._breakpoints.values():
@@ -118,6 +145,3 @@ class SoftwareBreakpointProvider(BreakpointProvider):
                     data = (data & 0xffff) | (bp.original_instr << 16)
 
         return data
-
-
-

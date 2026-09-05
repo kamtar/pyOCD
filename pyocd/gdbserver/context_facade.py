@@ -191,6 +191,16 @@ class GDBDebugContextFacade(object):
         # Append fp(r7), sp(r13), lr(r14), pc(r15)
         response += self._get_reg_index_value_pairs(['r7', 'sp', 'lr', 'pc'])
 
+        # Some target implementations do not expose DWT match information.
+        get_hit = getattr(self._context.core, 'get_watchpoint_hit', None)
+        hit = get_hit() if force_signal is None and get_hit is not None else None
+        if hit is not None:
+            kind, address = hit
+            reason = {Target.WatchpointType.READ: 'rwatch',
+                      Target.WatchpointType.WRITE: 'watch',
+                      Target.WatchpointType.READ_WRITE: 'awatch'}[kind]
+            response += ('%s:%x;' % (reason, address)).encode()
+
         return response
 
     def get_signal_value(self):

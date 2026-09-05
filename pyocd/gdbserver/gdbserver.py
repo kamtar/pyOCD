@@ -819,24 +819,22 @@ class GDBServer(threading.Thread):
 
     def _get_resume_step_addr(self, data):
         data = data.split(b'#')[0]
-        if b';' not in data:
-            return None
-        # c[;addr]
         if data[0:1] in (b'c', b's'):
-            addr = int(data[2:], base=16)
-        # Csig[;addr]
+            address = data[1:]
+            # Accept the legacy semicolon spelling as well as standard cADDR/sADDR.
+            address = address.lstrip(b';')
         elif data[0:1] in (b'C', b'S'):
-            addr = int(data[1:].split(b';')[1], base=16)
-        # else:
-        #     # Address is currently ignored - no need to log error
-        #     LOG.error("Invalid step address received from gdb")
-        return addr
+            _, _, address = data.partition(b';')
+        else:
+            return None
+        return int(address, 16) if address else None
 
     def resume(self, client, data):
         if data and data[0:1] in (b'c', b'C'):
             addr = self._get_resume_step_addr(data)
-            if addr:
-                LOG.debug("Command: Continue (addr=%d): Address is ignored", addr)
+            if addr is not None:
+                self.target_context.write_core_register_raw('pc', addr)
+                LOG.debug("Command: Continue (addr=%d)", addr)
             else:
                 LOG.debug("Command: Continue")
 
@@ -947,8 +945,9 @@ class GDBServer(threading.Thread):
     def step(self, client, data, start=0, end=0):
         if data and data[0:1] in (b's', b'S'):
             addr = self._get_resume_step_addr(data)
-            if addr:
-                LOG.debug("Command: Step (addr=%d): Address is ignored", addr)
+            if addr is not None:
+                self.target_context.write_core_register_raw('pc', addr)
+                LOG.debug("Command: Step (addr=%d)", addr)
             else:
                 LOG.debug("Command: Step")
 

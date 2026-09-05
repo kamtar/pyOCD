@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import logging
+from contextlib import contextmanager
 from copy import copy
 from typing import (Dict, List, TYPE_CHECKING, Iterable, MutableSequence, Optional, Sequence, Tuple)
 
@@ -293,8 +294,56 @@ class BreakpointManager:
     def filter_memory_aligned_32(self, addr: int, size: int, data: MutableSequence[int]) -> Sequence[int]:
         for provider in [p for p in self._providers.values() if p.do_filter_memory]:
             for i, d in enumerate(data):
-                data[i] = provider.filter_memory(addr + i, 32, d)
+                data[i] = provider.filter_memory(addr + 4 * i, 32, d)
         return data
+
+    @contextmanager
+    def filter_memory_write(self, addr: int, transfer_size: int, data: Sequence[int]):
+        """Preserve installed SW breakpoints while updating their saved instructions.
+
+        The caller writes the yielded values. Saved instructions are committed only
+        after the write (including deferred transfers) succeeds.
+        """
+        width = transfer_size // 8
+        end = addr + width * len(data)
+        overlaps = [bp for bp in self._breakpoints.values()
+                    if bp.type == Target.BreakpointType.SW and bp.addr < end and bp.addr + 2 > addr]
+        if not overlaps:
+            yield data
+            return
+        patched = list(data)
+        updates = []
+        for bp in overlaps:
+            original = bp.original_instr
+            for address in range(max(addr, bp.addr), min(end, bp.addr + 2)):
+                index, byte = divmod(address - addr, width)
+                shift = byte * 8
+                bp_shift = (address - bp.addr) * 8
+                original = ((original & ~(0xff << bp_shift))
+                            | (((data[index] >> shift) & 0xff) << bp_shift))
+                if bp.enabled:
+                    replacement = (bp.provider.BKPT_INSTR >> bp_shift) & 0xff
+                    patched[index] = (patched[index] & ~(0xff << shift)) | (replacement << shift)
+            updates.append((bp, original))
+        yield patched
+        self._core.flush()
+        for bp, original in updates:
+            bp.original_instr = original
+            self._core.invalidate_instruction_cache(bp.addr)
+
+    @contextmanager
+    def step_over_breakpoint(self):
+        """Temporarily expose the instruction at an installed software breakpoint."""
+        if not any(bp.type == Target.BreakpointType.SW for bp in self._breakpoints.values()):
+            yield
+            return
+        addr = self._core.read_core_register_raw('pc')
+        bp = self._breakpoints.get(addr & ~1)
+        if bp is not None and bp.type == Target.BreakpointType.SW:
+            with bp.provider.suspend_breakpoint(bp):
+                yield
+        else:
+            yield
 
     def remove_all_breakpoints(self) -> None:
         """@brief Remove all breakpoints immediately."""
