@@ -117,8 +117,13 @@ class ClientSocket(object):
         self._timeout = timeout or self.DEFAULT_TIMEOUT
         self._socket = None
         self._buffer = bytearray()
+        self._line_search_offset = 0
 
     def connect(self):
+        # A receive buffer belongs to a single TCP connection. Discard it
+        # before creating a new connection so data from the previous peer
+        # cannot be returned to the new caller.
+        self.close()
         self._socket = socket.create_connection(self._address, self._timeout)
 
     def close(self):
@@ -132,6 +137,8 @@ class ClientSocket(object):
             finally:
                 self._socket.close()
                 self._socket = None
+        self._buffer.clear()
+        self._line_search_offset = 0
 
     def set_blocking(self, blocking):
         self._socket.setblocking(blocking)
@@ -157,12 +164,16 @@ class ClientSocket(object):
     def readline(self):
         while True:
             # Try to extract a line from the buffer.
-            offset = self._buffer.find(b'\n')
+            offset = self._buffer.find(b'\n', self._line_search_offset)
             if offset != -1:
                 offset += 1 # include lf
                 data =  self._buffer[:offset]
                 del self._buffer[:offset]
+                self._line_search_offset = 0
                 return data
+            # No line ending was found. The next search only needs to inspect
+            # bytes received after the end of the current buffer.
+            self._line_search_offset = len(self._buffer)
             # Read a chunk and put in the buffer, then try again.
             while True:
                 try:
@@ -177,6 +188,8 @@ class ClientSocket(object):
                 if self._buffer:
                     data = bytes(self._buffer)
                     self._buffer.clear()
+                    self._line_search_offset = 0
                     return data
+                self._line_search_offset = 0
                 return b''
-            self._buffer += data
+            self._buffer.extend(data)

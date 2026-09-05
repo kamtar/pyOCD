@@ -18,9 +18,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import deque
 import selectors
 import socket
-from typing import Optional, Sequence, Callable, IO
+from typing import Deque, Optional, Sequence, Callable, IO
 import os
 from time import sleep
 from pathlib import Path
@@ -32,6 +33,72 @@ from ..debug.rtt import RTTControlBlock, RTTUpChannel, RTTDownChannel
 from ..utility.stdio import StdioHandler
 
 LOG = logging.getLogger(__name__)
+
+
+class _RTTDataQueue:
+    """Bounded FIFO of byte chunks used by an RTT channel."""
+
+    def __init__(self, max_size: int):
+        self._max_size = max_size
+        self._size = 0
+        self._chunks: Deque[bytes] = deque()
+        self._overflow_reported = False
+
+    def __bool__(self) -> bool:
+        return bool(self._chunks)
+
+    def __len__(self) -> int:
+        return self._size
+
+    @property
+    def max_size(self) -> int:
+        return self._max_size
+
+    def append(self, data: bytes) -> int:
+        """Append as much data as fits and return the number of bytes kept.
+
+        If the queue is full, new data is dropped. This explicit overflow
+        policy preserves existing data and its order. The channel handler also
+        stops reading while a queue is full, providing backpressure in the
+        usual case.
+        """
+        if not data:
+            return 0
+
+        bytes_to_keep = min(len(data), self._max_size - self._size)
+        if bytes_to_keep <= 0:
+            return 0
+
+        self._chunks.append(bytes(data[:bytes_to_keep]))
+        self._size += bytes_to_keep
+        return bytes_to_keep
+
+    def report_overflow(self) -> bool:
+        """Return true once per backlog episode when data is discarded."""
+        if self._overflow_reported:
+            return False
+        self._overflow_reported = True
+        return True
+
+    def peek(self) -> bytes:
+        return self._chunks[0]
+
+    def consume(self, count: int) -> None:
+        if count < 0 or count > self._size:
+            raise ValueError(f"Invalid RTT queue consume count: {count}")
+        while count:
+            chunk = self._chunks[0]
+            if count >= len(chunk):
+                self._chunks.popleft()
+                count -= len(chunk)
+                self._size -= len(chunk)
+            else:
+                self._chunks[0] = chunk[count:]
+                self._size -= count
+                count = 0
+        if self._size == 0:
+            self._overflow_reported = False
+
 
 class RTTChanWorker(ABC):
     """@brief Source and sink for data to be transferred over RTT. """
@@ -97,8 +164,36 @@ class RTTChanTCPWorker(RTTChanWorker):
             events = sel.select(timeout = 0)
         for key, _ in events:
             if key.fileobj == self.server:
-                self.client, _ = self.server.accept()
-                self.client.setblocking(False)
+                try:
+                    self.client, _ = self.server.accept()
+                    self.client.setblocking(False)
+                except BlockingIOError:
+                    # The connection may have disappeared between select()
+                    # and accept(). Try again on a later poll.
+                    self.client = None
+
+    def _close_client(self):
+        client = self.client
+        self.client = None
+        if client is not None:
+            try:
+                client.close()
+            except OSError:
+                pass
+
+    def _send_client_data(self, data: bytes) -> int:
+        try:
+            bytes_written = self.client.send(data)
+        except BlockingIOError:
+            # The socket is still connected, but its send buffer is full.
+            return 0
+        except OSError:
+            self._close_client()
+            raise
+        if data and bytes_written == 0:
+            # A zero-byte send for non-empty data is a terminal condition.
+            self._close_client()
+        return bytes_written
 
     def write_up_data(self, data: bytes):
         if self.client is None:
@@ -106,7 +201,7 @@ class RTTChanTCPWorker(RTTChanWorker):
             if self.client is None:
                 return 0
 
-        return self.client.send(data)
+        return self._send_client_data(data)
 
     def get_down_data(self):
         if self.client is None:
@@ -114,16 +209,28 @@ class RTTChanTCPWorker(RTTChanWorker):
             if self.client is None:
                 return b''
 
-        with selectors.DefaultSelector() as sel:
-            sel.register(self.client, selectors.EVENT_READ, None)
-            events = sel.select(timeout = 0)
+        try:
+            with selectors.DefaultSelector() as sel:
+                sel.register(self.client, selectors.EVENT_READ, None)
+                events = sel.select(timeout = 0)
+        except BlockingIOError:
+            return b''
+        except OSError:
+            self._close_client()
+            raise
         for key, _ in events:
             if key.fileobj == self.client:
-                data = self.client.recv(4096)
+                try:
+                    data = self.client.recv(4096)
+                except BlockingIOError:
+                    # Readiness can race with another consumer.
+                    return b''
+                except OSError:
+                    self._close_client()
+                    raise
                 if not data:
                     # client socket closed at other end
-                    self.client.close()
-                    self.client = None
+                    self._close_client()
                 return data
 
         return bytes()
@@ -131,8 +238,8 @@ class RTTChanTCPWorker(RTTChanWorker):
     def close(self):
         if self.server is not None:
             self.server.close()
-        if self.client is not None:
-            self.client.close()
+            self.server = None
+        self._close_client()
 
 class RTTChanFileWorker(RTTChanWorker):
     """@brief Implementation of channel worker that writes data from RTT channel
@@ -291,7 +398,10 @@ class RTTChanSysViewTCPWorker(RTTChanTCPWorker):
                 # Return hello response
                 response = self._HELLO_MSG
                 response += b"\x00" * (32 - len(response))
-                self.client.send(response)
+                try:
+                    self._send_client_data(response)
+                except OSError:
+                    self._close_client()
             else:
                 LOG.debug("Received non-hello message from SystemView client before hello message; ignoring")
             return b''
@@ -329,8 +439,12 @@ class RTTServer:
               sources and sinks of data for each channel. """
     control_block: RTTControlBlock
     workers: Optional[Sequence[Optional[RTTChanWorker]]]
-    up_buffers: Optional[Sequence[bytes]]
-    down_buffers: Optional[Sequence[bytes]]
+    up_buffers: Optional[Sequence[_RTTDataQueue]]
+    down_buffers: Optional[Sequence[_RTTDataQueue]]
+
+    # Keep each directional queue bounded. A chunk queue avoids repeatedly
+    # copying the complete backlog when data is only partially consumed.
+    RTT_BUFFER_MAX_SIZE = 1024 * 1024
 
     def __init__(self, target: SoCTarget, address: int, size: int,
                  control_block_id: bytes):
@@ -352,28 +466,46 @@ class RTTServer:
 
     def _channel_handler(self, ch_idx: int, worker: RTTChanWorker):
         if ch_idx < len(self.control_block.up_channels):
-            try:
-                # Read from up channel
-                self.up_buffers[ch_idx] += self.control_block.up_channels[ch_idx].read()
-            except (exceptions.TransferError, exceptions.RTTError) as e:
-                LOG.error("Error reading RTT up channel %d: %s", ch_idx, e)
+            up_buffer = self.up_buffers[ch_idx]
+            if len(up_buffer) < up_buffer.max_size:
+                try:
+                    # Do not read from the target while the destination queue
+                    # is full. If a single source read is larger than the
+                    # remaining capacity, the queue's drop-newest policy
+                    # keeps the backlog bounded.
+                    data = self.control_block.up_channels[ch_idx].read()
+                    bytes_kept = up_buffer.append(data)
+                    if bytes_kept < len(data) and up_buffer.report_overflow():
+                        LOG.warning("RTT up channel %d queue full; dropped %d bytes",
+                                    ch_idx, len(data) - bytes_kept)
+                except (exceptions.TransferError, exceptions.RTTError) as e:
+                    LOG.error("Error reading RTT up channel %d: %s", ch_idx, e)
             try:
                 # Write to worker
-                bytes_written = worker.write_up_data(self.up_buffers[ch_idx])
-                self.up_buffers[ch_idx] = self.up_buffers[ch_idx][bytes_written:]
+                if up_buffer:
+                    bytes_written = worker.write_up_data(up_buffer.peek())
+                    up_buffer.consume(bytes_written)
             except Exception as e:
                 LOG.error("Error writing to RTT channel worker %d: %s", ch_idx, e)
 
         if ch_idx < len(self.control_block.down_channels):
-            try:
-                # Read from worker
-                self.down_buffers[ch_idx] += worker.get_down_data()
-            except Exception as e:
-                LOG.error("Error reading from RTT channel worker %d: %s", ch_idx, e)
+            down_buffer = self.down_buffers[ch_idx]
+            if len(down_buffer) < down_buffer.max_size:
+                try:
+                    # Read from worker only while there is room in the
+                    # bounded queue.
+                    data = worker.get_down_data()
+                    bytes_kept = down_buffer.append(data)
+                    if bytes_kept < len(data) and down_buffer.report_overflow():
+                        LOG.warning("RTT down channel %d queue full; dropped %d bytes",
+                                    ch_idx, len(data) - bytes_kept)
+                except Exception as e:
+                    LOG.error("Error reading from RTT channel %d: %s", ch_idx, e)
             try:
                 # Write to down channel
-                bytes_out = self.control_block.down_channels[ch_idx].write(self.down_buffers[ch_idx])
-                self.down_buffers[ch_idx] = self.down_buffers[ch_idx][bytes_out:]
+                if down_buffer:
+                    bytes_out = self.control_block.down_channels[ch_idx].write(down_buffer.peek())
+                    down_buffer.consume(bytes_out)
             except (exceptions.TransferError, exceptions.RTTError) as e:
                 LOG.error("Error writing RTT down channel %d: %s", ch_idx, e)
 
@@ -397,8 +529,8 @@ class RTTServer:
         num_chans: int = max(num_up_chans, num_down_chans)
 
         self.workers = [None] * num_chans
-        self.up_buffers = [bytes()] * num_chans
-        self.down_buffers = [bytes()] * num_chans
+        self.up_buffers = [_RTTDataQueue(self.RTT_BUFFER_MAX_SIZE) for _ in range(num_chans)]
+        self.down_buffers = [_RTTDataQueue(self.RTT_BUFFER_MAX_SIZE) for _ in range(num_chans)]
 
     def stop(self):
         """@brief Close all RTT workers. """

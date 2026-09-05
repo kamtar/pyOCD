@@ -149,10 +149,9 @@ def parse_mi_record(line: str) -> Optional[MiRecord]:
     token = int(match.group(1)) if match.group(1) else None
     prefix, body = match.group(2), match.group(3)
     if prefix in "~@&":
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            payload = body
+        # Stream records use GDB's C-string escapes, which are a superset of
+        # JSON's escapes (notably octal, \a, and \v).
+        payload = _MiValueParser(body)._value()
         return MiRecord(token, prefix, "stream", payload)
     cls, comma, rest = body.partition(",")
     payload = _MiValueParser(rest).parse_results() if comma else {}
@@ -192,6 +191,7 @@ class GdbMiClient:
         self._pending_lock = threading.Lock()
         self._write_lock = threading.Lock()
         self._token = 0
+        self._reader_error: Optional[str] = None
         self.stderr: list[str] = []
         self.stream: list[str] = []
 
@@ -208,8 +208,11 @@ class GdbMiClient:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
             creationflags=creationflags)
-        assert self._process.stdout and self._process.stderr
-        threading.Thread(target=self._read_stdout, daemon=True,
+        process = self._process
+        with self._pending_lock:
+            self._reader_error = None
+        assert process.stdout and process.stderr
+        threading.Thread(target=self._read_stdout, args=(process,), daemon=True,
                          name="pyocd-web-gdb-mi").start()
         threading.Thread(target=self._read_stderr, daemon=True,
                          name="pyocd-web-gdb-stderr").start()
@@ -230,6 +233,9 @@ class GdbMiClient:
             self._token += 1
             token = self._token
             with self._pending_lock:
+                if process is not self._process or self._reader_error is not None:
+                    detail = self._reader_error or "GDB process disconnected"
+                    raise GdbMiError(detail)
                 self._pending[token] = response
             try:
                 process.stdin.write(f"{token}{command}\n")
@@ -268,30 +274,54 @@ class GdbMiClient:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2.0)
+        self._fail_pending(process, "GDB process disconnected")
         self._process = None
 
-    def _read_stdout(self) -> None:
-        assert self._process and self._process.stdout
-        for line in self._process.stdout:
-            try:
-                record = parse_mi_record(line)
-            except GdbMiError as exc:
-                self.stderr.append(str(exc))
-                continue
-            if not record:
-                continue
-            if record.prefix == "^" and record.token is not None:
-                with self._pending_lock:
-                    waiter = self._pending.pop(record.token, None)
-                if waiter:
-                    waiter.put(record)
+    def _fail_pending(self, process: subprocess.Popen[str], detail: str) -> None:
+        """Wake all commands when the reader can no longer receive replies."""
+        with self._pending_lock:
+            if process is not self._process:
+                return
+            self._reader_error = detail
+            waiters = list(self._pending.values())
+            self._pending.clear()
+
+        record = MiRecord(None, "?", "error", {"msg": detail})
+        for waiter in waiters:
+            waiter.put_nowait(record)
+
+    def _read_stdout(self, process: Optional[subprocess.Popen[str]] = None) -> None:
+        process = process or self._process
+        if process is None or process.stdout is None:
+            return
+
+        detail = "GDB process disconnected"
+        try:
+            for line in process.stdout:
+                try:
+                    record = parse_mi_record(line)
+                except GdbMiError as exc:
+                    self.stderr.append(str(exc))
                     continue
-            if record.prefix in "~@&?":
-                self.stream.append(str(record.payload))
-                if len(self.stream) > 200:
-                    del self.stream[:-200]
-            if self._event_handler:
-                self._event_handler(record)
+                if not record:
+                    continue
+                if record.prefix == "^" and record.token is not None:
+                    with self._pending_lock:
+                        waiter = self._pending.pop(record.token, None)
+                    if waiter:
+                        waiter.put(record)
+                        continue
+                if record.prefix in "~@&?":
+                    self.stream.append(str(record.payload))
+                    if len(self.stream) > 200:
+                        del self.stream[:-200]
+                if self._event_handler:
+                    self._event_handler(record)
+        except Exception as exc:
+            detail = f"GDB process disconnected: {exc}"
+            self.stderr.append(detail)
+        finally:
+            self._fail_pending(process, detail)
 
     def _read_stderr(self) -> None:
         assert self._process and self._process.stderr
