@@ -38,6 +38,7 @@
   color: #737f8c;
   opacity: .78;
 }
+#traffic { order: 8; }
 #nav button[data-tab="traffic"]:hover { color: #a5afba; opacity: 1; }
 #nav button[data-tab="traffic"].active {
   color: #aab4bf;
