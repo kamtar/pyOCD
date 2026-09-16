@@ -4,6 +4,14 @@ The pyOCD web control center is a browser interface for probe selection, target 
 GDB server control, programming, memory inspection, basic fault analysis, and commander commands.
 It is designed for a long-running pyOCD installation such as a Raspberry Pi programmer.
 
+The interface uses a continuous scrollable workspace with sidebar shortcuts, a persistent
+connection header, and compact overview and debugger panels. Color schemes and UI scale
+remain available under System & About. The header's **Auto-start GDB on connect** checkbox
+is saved in the current browser (off by default). When enabled, a successful connection
+from this browser starts the external GDB server on port 3030. Turn it off to connect for
+direct programming or browser debugging; stop an already running external GDB server
+before starting the browser debugger.
+
 ## Installation and startup
 
 Install pyOCD, then start the service:
