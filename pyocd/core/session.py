@@ -35,7 +35,8 @@ from . import exceptions
 from .options_manager import OptionsManager
 from .target import Target
 from ..utility.notification import Notifier
-from ..target.pack.cbuild_run import CbuildRun
+from ..target.csolution.cbuild_run import CbuildRun
+from ..target.csolution.ctrace_run import CTraceRun
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -112,6 +113,10 @@ class Session(Notifier):
         """Session notification events."""
         ## Sent after target-specific trace support has been reinitialized following a reset.
         TRACE_RESTART = 1
+        ## Sent before resuming target execution. Opens a new raw trace output file for capture.
+        TRACE_DATA_CAPTURE = 2
+        ## Sent after target has been halted. Flushes buffered raw trace data to its output file.
+        TRACE_DATA_FLUSH = 3
 
     @classmethod
     def get_current(cls) -> Self:
@@ -187,6 +192,7 @@ class Session(Notifier):
         self._probeserver: Optional[DebugProbeServer] = None
         self._context_state = SimpleNamespace()
         self._cbuild_run: Optional[CbuildRun] = None
+        self._ctrace_run: Optional[CTraceRun] = None
         self._trace_started: bool = False
 
         # Set this session on the probe, if we were given a probe.
@@ -215,6 +221,11 @@ class Session(Notifier):
                 self._cbuild_run = CbuildRun(self.options.get('cbuild_run'))
                 cbuild_run_config = self._get_cbuild_run_config(command)
                 self._options.add_back(cbuild_run_config)
+                if self.cbuild_run is not None and self.cbuild_run.trace.enabled:
+                    try:
+                        self._ctrace_run = CTraceRun(self)
+                    except (exceptions.Error, OSError) as err:
+                        LOG.error("Failed to initialize ctrace-run support: %s", err)
 
         # Load options from the config file.
         config = self._get_config()
@@ -305,6 +316,17 @@ class Session(Notifier):
         debugger_options['systemview_file'] = self.cbuild_run.systemview_file
         debugger_options['systemview_auto_start'] = self.cbuild_run.systemview_auto_start
         debugger_options['systemview_auto_stop'] = self.cbuild_run.systemview_auto_stop
+
+        swo_uart = self.cbuild_run.trace.swo_uart
+        if swo_uart is not None and swo_uart.enabled:
+            debugger_options['enable_swv'] = True
+            debugger_options['swv_system_clock'] = swo_uart.input_clock
+            debugger_options['swv_clock'] = swo_uart.output_clock
+            debugger_options['swv_raw_enable'] = True
+            if swo_uart.mode == 'file':
+                debugger_options['swv_raw_file'] = swo_uart.file
+            elif swo_uart.mode == 'server':
+                debugger_options['swv_raw_port'] = swo_uart.server_port
 
         # Set reset types for load operations.
         debugger_options['load.pre_reset'] = self.cbuild_run.pre_reset
@@ -478,6 +500,11 @@ class Session(Notifier):
         """@brief The CbuildRun instance if a cbuild-run file was loaded."""
         return self._cbuild_run
 
+    @property
+    def ctrace_run(self) -> Optional[CTraceRun]:
+        """@brief The CTraceRun instance if trace was enabled by cbuild-run."""
+        return self._ctrace_run
+
     def __enter__(self) -> "Session":
         assert self._probe is not None
         if self._auto_open:
@@ -604,7 +631,7 @@ class Session(Notifier):
         if self._trace_started:
             return
 
-        if self.target is not None:
+        if self.target is not None and self.target.trace_enabled:
             self.target.trace_start()
             self._trace_started = True
             self.subscribe(self._reset_handler, Target.Event.POST_RESET)
@@ -661,8 +688,7 @@ class Session(Notifier):
             if init_board:
                 self._board.init()
                 self._inited = True
-                if self.options.get('enable_swv'):
-                    self._trace_start()
+                self._trace_start()
 
     def disconnect(self) -> None:
         """@brief Disconnect the session without closing the probe.

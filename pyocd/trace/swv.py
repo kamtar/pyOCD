@@ -20,22 +20,23 @@ import logging
 from pathlib import Path
 import threading
 from time import sleep
-from typing import (Optional, BinaryIO, TextIO, TYPE_CHECKING)
+from typing import (Optional, TextIO, TYPE_CHECKING)
 
-from .sink import TraceEventSink
+from .sink import (TraceDataSink, TraceEventSink)
 from .events import (TraceEvent, TraceITMEvent)
 from .swo import SWOParser
 from ..coresight.itm import ITM
 from ..coresight.tpiu import TPIU
 from ..core import exceptions
 from ..probe.debug_probe import DebugProbe
-from ..utility.server import StreamServer
+from ..debug.sequences.delegates import TraceSetup
 
 if TYPE_CHECKING:
     from ..core.session import Session
     from ..utility.notification import Notification
 
 LOG = logging.getLogger(__name__)
+
 
 class SWVEventSink(TraceEventSink):
     """@brief Trace event sink that converts ITM packets to a text stream."""
@@ -95,14 +96,23 @@ class SWVReader(threading.Thread):
         self._sys_clock = 0
         self._swo_clock = 0
         self._is_subscribed = False
+        self._raw_output: Optional[TraceDataSink] = None
 
         target = self._session.target
         assert target
         self._target = target
         self._core = target.cores[core_number]
+        if target.debug_sequence_delegate is not None:
+            self._trace_setup = target.debug_sequence_delegate.trace_setup
+        else:
+            self._trace_setup = TraceSetup.LEGACY
 
     def _init_components(self, sys_clock: int, swo_clock: int) -> bool:
         """@brief Configure the target's standard SWV trace components."""
+        if self._trace_setup == TraceSetup.FULL:
+            # The target's debug sequence delegate is responsible for configuring the trace components
+            return True
+
         itm = self._target.get_first_child_of_type(ITM)
         if not itm:
             LOG.warning("SWV not initalized: Target does not have ITM component")
@@ -156,7 +166,27 @@ class SWVReader(threading.Thread):
         self._sink = SWVEventSink(console)
         self._parser.connect(self._sink)
 
+        if self._session.options.get('swv_raw_enable') and self._raw_output is None:
+            raw_file = self._session.options.get('swv_raw_file')
+            if raw_file:
+                self._raw_output = TraceDataSink.file(Path(raw_file).expanduser())
+            else:
+                self._raw_output = TraceDataSink.server(
+                    self._session.options.get('swv_raw_port'),
+                    self._session.options.get('serve_local_only'),
+                    'SWV raw',
+                )
+
+        if self._raw_output is not None:
+            try:
+                # Keep legacy SWV raw output active even when no trace buffer capture is running.
+                self._raw_output.start(True)
+            except OSError as err:
+                LOG.warning("Failed to start SWV raw output: %s", err)
+
         self._session.subscribe(self._reset_handler, self._session.Event.TRACE_RESTART, self._session)
+        self._session.subscribe(self._trace_data_handler, self._session.Event.TRACE_DATA_CAPTURE, self._session)
+        self._session.subscribe(self._trace_data_handler, self._session.Event.TRACE_DATA_FLUSH, self._session)
         self._is_subscribed = True
 
         self.start()
@@ -172,18 +202,22 @@ class SWVReader(threading.Thread):
         """
         if self._is_subscribed:
             self._session.unsubscribe(self._reset_handler, self._session.Event.TRACE_RESTART)
+            self._session.unsubscribe(self._trace_data_handler, self._session.Event.TRACE_DATA_CAPTURE)
+            self._session.unsubscribe(self._trace_data_handler, self._session.Event.TRACE_DATA_FLUSH)
             self._is_subscribed = False
 
-        if not self.is_alive():
-            return
+        if self.is_alive():
+            self._shutdown_event.set()
+            self.join()
 
-        self._shutdown_event.set()
-        self.join()
+        if self._raw_output is not None:
+            self._raw_output.shutdown()
 
-        # init() should never have started the SWV thread unless the target has ITM and TPIU.
-        itm = self._target.get_first_child_of_type(ITM)
-        assert itm
-        itm.disable()
+        if self._trace_setup == TraceSetup.LEGACY:
+            # init() should never have started the SWV thread unless the target has ITM and TPIU.
+            itm = self._target.get_first_child_of_type(ITM)
+            assert itm
+            itm.disable()
 
     def run(self) -> None:
         """@brief SWV reader thread routine.
@@ -194,26 +228,8 @@ class SWVReader(threading.Thread):
         """
         assert self._session.probe
 
-        swv_raw_server = None
-        swv_raw_file: Optional[BinaryIO] = None
-        if self._session.options.get('swv_raw_enable'):
-            raw_file_name = self._session.options.get('swv_raw_file')
-            if raw_file_name:
-                # swv_raw_file takes precedence over swv_raw_port.
-                raw_file_path = Path(raw_file_name).expanduser()
-                try:
-                    swv_raw_file = raw_file_path.open('wb')
-                except OSError as err:
-                    LOG.warning("Failed to open SWV raw output file '%s': %s", raw_file_path, err)
-            else:
-                swv_raw_server = StreamServer(
-                                    self._session.options.get('swv_raw_port'),
-                                    serve_local_only=self._session.options.get('serve_local_only'),
-                                    name="SWV raw",
-                                    is_read_only=True)
-
+        # Stop SWO first in case the probe already had it started. Ignore if this fails.
         try:
-            # Stop SWO first in case the probe already had it started. Ignore if this fails.
             try:
                 self._session.probe.swo_stop()
             except exceptions.ProbeError:
@@ -223,10 +239,8 @@ class SWVReader(threading.Thread):
             while not self._shutdown_event.is_set():
                 data = self._session.probe.swo_read()
                 if data:
-                    if swv_raw_file:
-                        swv_raw_file.write(data)
-                    elif swv_raw_server:
-                        swv_raw_server.write(data)
+                    if self._raw_output is not None:
+                        self._raw_output.write(data)
                     self._parser.parse(data)
 
                 sleep(0.001)
@@ -235,14 +249,6 @@ class SWVReader(threading.Thread):
                 self._session.probe.swo_stop()
             except exceptions.ProbeError:
                 pass
-
-            if swv_raw_file:
-                swv_raw_file.flush()
-                swv_raw_file.close()
-
-            if swv_raw_server:
-                swv_raw_server.stop()
-
     def _reset_handler(self, notification: "Notification") -> None:
         """@brief Reconfigure SWV components after target trace support has restarted."""
         if not self.is_alive():
@@ -252,3 +258,21 @@ class SWVReader(threading.Thread):
             self._init_components(self._sys_clock, self._swo_clock)
         except exceptions.Error:
             LOG.warning("Failed to reinitialize SWV after reset", exc_info=self._session.log_tracebacks)
+
+    def _trace_data_handler(self, notification: "Notification") -> None:
+        """Open or flush the raw trace output destination."""
+        if self._raw_output is None:
+            return
+
+        if notification.event == self._session.Event.TRACE_DATA_CAPTURE:
+            try:
+                self._raw_output.start(bool(notification.data))
+            except OSError as err:
+                LOG.warning("Failed to start SWV raw output: %s", err)
+            return
+        elif notification.event == self._session.Event.TRACE_DATA_FLUSH:
+            try:
+                sleep(0.003)
+                self._raw_output.flush()
+            except OSError as err:
+                LOG.warning("Failed to update SWV raw output file: %s", err)

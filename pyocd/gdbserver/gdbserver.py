@@ -459,12 +459,12 @@ class GDBServer(threading.Thread):
             LOG.debug("GDB activity callback failed", exc_info=True)
 
     def trace_flush(self) -> None:
-        # TraceFlush stub
-        pass
+        if self.board.target.trace_enabled:
+            self.board.target.trace_flush()
 
     def trace_capture(self) -> None:
-        # TraceCapture stub
-        pass
+        if self.board.target.trace_enabled:
+            self.board.target.trace_capture()
 
     def _init_remote_commands(self):
         """@brief Initialize the remote command processor infrastructure."""

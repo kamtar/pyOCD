@@ -1,5 +1,5 @@
 # pyOCD debugger
-# Copyright (c) 2017-2019 Arm Limited
+# Copyright (c) 2017-2019,2026 Arm Limited
 # Copyright (c) 2021-2022 Chris Reed
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -96,13 +96,14 @@ class SWOParser:
                         return first if first is not None else second
 
                     # Merge the two data trace events.
+                    pending = self._pending_data_trace
                     ev = events.TraceDataTraceEvent(cmpn=event.comparator,
-                        pc=_first_present(event.pc, self._pending_data_trace.pc),
-                        addr=_first_present(event.address, self._pending_data_trace.address),
-                        value=_first_present(event.value, self._pending_data_trace.value),
-                        rnw=_first_present(event.is_read, self._pending_data_trace.is_read),
-                        sz=_first_present(event.transfer_size, self._pending_data_trace.transfer_size),
-                        ts=self._pending_data_trace.timestamp)
+                        pc=_first_present(event.pc, pending.pc),
+                        addr=_first_present(event.address, pending.address),
+                        value=_first_present(event.value, pending.value),
+                        rnw=_first_present(event.is_read, pending.is_read),
+                        sz=_first_present(event.transfer_size, pending.transfer_size),
+                        ts=pending.timestamp)
                 else:
                     ev = self._pending_data_trace
                 self._pending_events.append(ev)
