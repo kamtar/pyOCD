@@ -2,8 +2,8 @@
  *
  * Layout: a session bar (MCU, connect mode, GDB, options, connect) that turns into
  * live target controls once connected; Home / Flash / Debug / Settings views;
- * a bottom dock with the log, console and SWD traffic; and a drawer holding
- * every connection option.
+ * a bottom dock with the log, console and SWD traffic; and a panel under the
+ * bar holding every connection option.
  */
 'use strict';
 
@@ -167,7 +167,7 @@ const fail = error => toast(error.message || String(error), true);
 
 /* ---------- Connection options ---------- */
 
-// Every option the drawer edits. `section` places it in the profile sent to
+// Every option the options panel edits. `section` places it in the profile sent to
 // the server; `adapter` limits it to one probe kind.
 const FIELDS = [
   {id: 'protocol', key: 'dap_protocol', def: () => connectionDefaults.dap_protocol},
@@ -247,7 +247,7 @@ async function saveConfig() {
     if (packSequenceInfo?.target !== savedProfile.target_override) await loadPackSequenceInfo();
   } catch (error) { fail(error); }
 }
-// Counts drawer settings that differ from their defaults. Fields shown in the
+// Counts panel settings that differ from their defaults. Fields shown in the
 // session bar are already visible, so they don't count.
 function updateOptionsBadge() {
   const clockChanged = +$('#frequency').value !== +connectionDefaults.frequency;
@@ -1291,7 +1291,7 @@ async function clearSwdTraffic() {
   } catch (error) { fail(error); }
 }
 
-/* ---------- Navigation, popovers, drawer ---------- */
+/* ---------- Navigation, popovers, options panel ---------- */
 
 const VIEWS = ['home', 'flash', 'debug', 'settings'];
 function showView(id) {
@@ -1318,16 +1318,15 @@ function closePopovers() {
   openPopover[0].setAttribute('aria-expanded', 'false');
   openPopover = null;
 }
-function openDrawer() {
+// The options panel drops down under the session bar, next to its button.
+function setOptionsOpen(open) {
   closePopovers();
-  $('#optionsDrawer').hidden = false;
-  $('#drawerScrim').hidden = false;
-  $('#closeOptions').focus();
+  $('#optionsPanel').hidden = !open;
+  $('#optionsBtn').classList.toggle('active', open);
+  $('#optionsBtn').setAttribute('aria-expanded', String(open));
 }
-function closeDrawer() {
-  $('#optionsDrawer').hidden = true;
-  $('#drawerScrim').hidden = true;
-}
+const openOptions = () => setOptionsOpen(true);
+const closeOptions = () => setOptionsOpen(false);
 
 /* ---------- Wiring ---------- */
 
@@ -1358,7 +1357,7 @@ function wire() {
   };
   $('#probeQuick').onchange = e => onProbeChanged(e.target.value);
   $('#probeSelect').onchange = e => onProbeChanged(e.target.value);
-  $('#probeMissing').onclick = openDrawer;
+  $('#probeMissing').onclick = openOptions;
   $('#frequency').oninput = () => { updateClock(); updateOptionsBadge(); };
   $('#frequency').onchange = saveConfig;
   $$('[data-clock]').forEach(b => b.onclick = () => { $('#frequency').value = b.dataset.clock; updateClock(); saveConfig(); });
@@ -1369,7 +1368,7 @@ function wire() {
   $$('[data-reset]').forEach(b => b.onclick = () => { closePopovers(); resetTarget(b.dataset.reset); });
   $('#gdbSwitch').onchange = e => toggleGdb(e.target.checked);
   $('#copyEndpoint').onclick = () => navigator.clipboard.writeText(gdbEndpoint()).then(() => toast(`Copied ${gdbEndpoint()}`), () => toast('Clipboard unavailable', true));
-  $('#optionsBtn').onclick = openDrawer;
+  $('#optionsBtn').onclick = () => setOptionsOpen($('#optionsPanel').hidden);
   $('#connectBtn').onclick = () => state.connected ? disconnect() : connectWithGdb().catch(fail);
 
   // Navigation
@@ -1377,20 +1376,19 @@ function wire() {
   document.addEventListener('click', e => {
     const viewLink = e.target.closest('[data-view-link]');
     if (viewLink && !viewLink.closest('#quickFlash')) showView(viewLink.dataset.viewLink);
-    if (e.target.closest('[data-open-options]')) openDrawer();
+    if (e.target.closest('[data-open-options]')) openOptions();
     if (e.target.closest('[data-open-packs]') && !e.target.closest('#targetOptions')) openPackDialog();
     if (openPopover && !openPopover[0].contains(e.target) && !openPopover[1].contains(e.target)) closePopovers();
   });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Escape') return;
     if (openPopover) closePopovers();
-    else if (!$('#optionsDrawer').hidden) closeDrawer();
+    else if (!$('#optionsPanel').hidden) closeOptions();
   });
   window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
 
-  // Drawer
-  $('#closeOptions').onclick = closeDrawer;
-  $('#drawerScrim').onclick = closeDrawer;
+  // Options panel
+  $('#closeOptions').onclick = closeOptions;
   $('#resetOptions').onclick = restoreDefaults;
   $('#probeResetBtn').onclick = pulseResetPin;
   for (const f of FIELDS) $('#' + f.id).addEventListener('change', saveConfig);

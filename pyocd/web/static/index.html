@@ -105,6 +105,98 @@ try {
   <span id="busyChip" class="chip busy" hidden><i class="spin"></i><span id="busyLabel">Working…</span></span>
 </header>
 
+<section id="optionsPanel" class="options-panel" aria-label="Connection options" hidden>
+  <div class="options-head">
+    <h2>Connection options</h2>
+    <small class="muted">Saved automatically · applied on next connect</small>
+    <span class="spacer"></span>
+    <button id="resetOptions" class="ghost">Restore defaults</button>
+    <button id="closeOptions" class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="options-grid form">
+    <section class="opt-group">
+      <h4>Probe</h4>
+      <label>Debug probe<select id="probeSelect"><option value="">Scanning…</option></select></label>
+      <div class="actions"><button id="probeResetBtn" title="Pulse the probe nRESET pin without connecting">Pulse reset pin</button></div>
+    </section>
+    <section class="opt-group">
+      <h4>Link</h4>
+      <label>Transport<select id="protocol"><option value="default">Automatic</option><option value="swd">SWD</option><option value="jtag">JTAG</option></select></label>
+      <label>Debug clock
+        <div class="range"><input id="frequency" type="range" min="50000" max="10000000" step="50000" value="1000000" aria-label="Debug clock"><output id="frequencyOut">1 MHz</output></div>
+        <div class="presets">
+          <button type="button" data-clock="100000">100 kHz</button>
+          <button type="button" data-clock="1000000">1 MHz</button>
+          <button type="button" data-clock="4000000">4 MHz</button>
+          <button type="button" data-clock="10000000">10 MHz</button>
+        </div>
+      </label>
+      <label class="check"><input id="resumeOnDisconnect" type="checkbox"><span><b>Run on disconnect</b><small>Resume execution when the session closes.</small></span></label>
+      <label class="check"><input id="swjEnable" type="checkbox"><span><b>SWJ switch sequence</b><small>Switch between SWD and JTAG automatically.</small></span></label>
+      <label class="check"><input id="swjDormant" type="checkbox"><span><b>Dormant-state sequence</b><small>ADIv5.2 transition where supported.</small></span></label>
+    </section>
+    <section class="opt-group">
+      <h4>Reset</h4>
+      <label>Reset method<select id="resetMethod"><option value="hardware">Reset pin</option><option value="core">Core reset over SWD</option></select></label>
+      <div class="formrow">
+        <label>Hold time (s)<input id="resetHoldTime" type="number" min="0" max="10" step="0.01"></label>
+        <label>Post-reset delay (s)<input id="resetPostDelay" type="number" min="0" max="10" step="0.01"></label>
+      </div>
+    </section>
+    <section class="opt-group">
+      <h4>Flashing</h4>
+      <label>Erase method<select id="eraseMode"><option value="auto">Automatic</option><option value="sector">Sector</option><option value="chip">Full chip</option></select></label>
+      <label class="check"><input id="smartFlash" type="checkbox"><span><b>Smart flash</b><small>Skip pages whose contents are unchanged.</small></span></label>
+      <label class="check"><input id="trustCrc" type="checkbox"><span><b>Trust page CRC</b><small>Accept matching CRCs without a full readback.</small></span></label>
+      <label class="check"><input id="keepUnwritten" type="checkbox"><span><b>Preserve unwritten data</b><small>Keep existing data in partially written sectors.</small></span></label>
+    </section>
+    <section id="cmsisDapOptions" class="opt-group adapter" hidden>
+      <h4>CMSIS-DAP</h4>
+      <label class="check"><input id="cmsisPreferV1" type="checkbox"><span><b>Prefer CMSIS-DAP v1</b><small>Use HID v1 when both versions are exposed.</small></span></label>
+      <label class="check"><input id="cmsisDeferred" type="checkbox"><span><b>Deferred transfers</b><small>Queue transfers for better throughput.</small></span></label>
+      <label class="check"><input id="cmsisLimitPackets" type="checkbox"><span><b>Limit in-flight packets</b><small>For probes that mishandle queues.</small></span></label>
+    </section>
+    <section id="jlinkOptions" class="opt-group adapter" hidden>
+      <h4>J-Link</h4>
+      <label class="check"><input id="jlinkPower" type="checkbox"><span><b>Control target power</b><small>Power on while connected, off on disconnect.</small></span></label>
+    </section>
+    <section id="stlinkOptions" class="opt-group adapter" hidden>
+      <h4>ST-Link V3</h4>
+      <label>Performance mode<select id="stlinkPrescaler"><option value="1">High performance</option><option value="2">Normal</option><option value="4">Low power</option></select></label>
+    </section>
+    <section id="rpiOptions" class="opt-group adapter" hidden>
+      <h4>Raspberry Pi GPIO <span class="tag">3.3 V · BCM numbering</span></h4>
+      <div id="pins" class="pins"></div>
+      <div class="formrow three">
+        <label>SWCLK<input id="swclk" type="number"></label>
+        <label>SWDIO<input id="swdio" type="number"></label>
+        <label>nRESET<input id="nreset" type="number" placeholder="Optional"></label>
+      </div>
+      <div class="formrow">
+        <label>SWDIO direction<input id="swdioDir" type="number" placeholder="Optional"></label>
+        <label>Wait retries<input id="gpioWaitRetries" type="number" min="1" max="10000"></label>
+      </div>
+      <label class="check"><input id="restorePins" type="checkbox"><span><b>Restore GPIO pins</b><small>Restore pin functions when the probe closes.</small></span></label>
+      <p class="caution">Share ground with the target. Raspberry Pi 5 is not supported.</p>
+    </section>
+    <section id="packSequenceOptions" class="opt-group" hidden>
+      <h4>CMSIS-Pack debug sequences</h4>
+      <p id="packSequenceIdentity" class="muted small"></p>
+      <label class="check"><input id="packSequencesEnable" type="checkbox"><span><b>Use vendor debug sequences</b><small>Vendor-supplied connect, reset and unlock behaviour.</small></span></label>
+      <div class="inline"><select id="packSequenceRunSelect"><option value="">Select a sequence…</option></select><button id="packSequenceRun" disabled>Run</button></div>
+      <p class="caution">A sequence may reset, unlock, erase or disconnect the MCU.</p>
+    </section>
+    <section class="opt-group">
+      <h4>Recovery</h4>
+      <label class="check"><input id="autoUnlock" type="checkbox"><span><b>Automatic unlock</b><small>Mass-erase a secured target when required to unlock it.</small></span></label>
+      <dl class="facts inline"><div><dt>Security</dt><dd id="targetSecurityState">Not connected</dd></div><div><dt>Method</dt><dd id="targetRecoveryMethod">—</dd></div></dl>
+      <p id="targetRecoveryImplementation" class="muted small"></p>
+      <button id="targetUnlock" class="danger" disabled>Mass erase and unlock</button>
+    </section>
+  </div>
+</section>
+
+
 <div class="shell">
   <nav id="nav" class="rail" aria-label="Views">
     <button data-view="home" class="active"><svg class="i"><use href="#i-home"/></svg><span>Home</span></button>
@@ -322,94 +414,6 @@ try {
   </section>
 </div>
 
-<div id="drawerScrim" class="scrim" hidden></div>
-<aside id="optionsDrawer" class="drawer" aria-label="Connection options" hidden>
-  <div class="drawer-head">
-    <h2>Connection options</h2>
-    <button id="closeOptions" class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
-  </div>
-  <div class="drawer-body form">
-    <h4>Probe</h4>
-    <label>Debug probe<select id="probeSelect"><option value="">Scanning…</option></select></label>
-    <div class="actions"><button id="probeResetBtn" title="Pulse the probe nRESET pin without connecting">Pulse reset pin</button></div>
-
-    <h4>Link</h4>
-    <label>Transport<select id="protocol"><option value="default">Automatic</option><option value="swd">SWD</option><option value="jtag">JTAG</option></select></label>
-    <label>Debug clock
-      <div class="range"><input id="frequency" type="range" min="50000" max="10000000" step="50000" value="1000000" aria-label="Debug clock"><output id="frequencyOut">1 MHz</output></div>
-      <div class="presets">
-        <button type="button" data-clock="100000">100 kHz</button>
-        <button type="button" data-clock="1000000">1 MHz</button>
-        <button type="button" data-clock="4000000">4 MHz</button>
-        <button type="button" data-clock="10000000">10 MHz</button>
-      </div>
-    </label>
-    <label class="check"><input id="resumeOnDisconnect" type="checkbox"><span><b>Run on disconnect</b><small>Resume execution when the session closes.</small></span></label>
-    <label class="check"><input id="swjEnable" type="checkbox"><span><b>SWJ switch sequence</b><small>Switch between SWD and JTAG automatically.</small></span></label>
-    <label class="check"><input id="swjDormant" type="checkbox"><span><b>Dormant-state sequence</b><small>ADIv5.2 transition where supported.</small></span></label>
-
-    <h4>Reset</h4>
-    <label>Reset method<select id="resetMethod"><option value="hardware">Reset pin</option><option value="core">Core reset over SWD</option></select></label>
-    <div class="formrow">
-      <label>Hold time (s)<input id="resetHoldTime" type="number" min="0" max="10" step="0.01"></label>
-      <label>Post-reset delay (s)<input id="resetPostDelay" type="number" min="0" max="10" step="0.01"></label>
-    </div>
-
-    <h4>Flashing</h4>
-    <label>Erase method<select id="eraseMode"><option value="auto">Automatic</option><option value="sector">Sector</option><option value="chip">Full chip</option></select></label>
-    <label class="check"><input id="smartFlash" type="checkbox"><span><b>Smart flash</b><small>Skip pages whose contents are unchanged.</small></span></label>
-    <label class="check"><input id="trustCrc" type="checkbox"><span><b>Trust page CRC</b><small>Accept matching CRCs without a full readback.</small></span></label>
-    <label class="check"><input id="keepUnwritten" type="checkbox"><span><b>Preserve unwritten data</b><small>Keep existing data in partially written sectors.</small></span></label>
-
-    <div id="cmsisDapOptions" class="adapter" hidden>
-      <h4>CMSIS-DAP</h4>
-      <label class="check"><input id="cmsisPreferV1" type="checkbox"><span><b>Prefer CMSIS-DAP v1</b><small>Use HID v1 when both versions are exposed.</small></span></label>
-      <label class="check"><input id="cmsisDeferred" type="checkbox"><span><b>Deferred transfers</b><small>Queue transfers for better throughput.</small></span></label>
-      <label class="check"><input id="cmsisLimitPackets" type="checkbox"><span><b>Limit in-flight packets</b><small>For probes that mishandle queues.</small></span></label>
-    </div>
-    <div id="jlinkOptions" class="adapter" hidden>
-      <h4>J-Link</h4>
-      <label class="check"><input id="jlinkPower" type="checkbox"><span><b>Control target power</b><small>Power on while connected, off on disconnect.</small></span></label>
-    </div>
-    <div id="stlinkOptions" class="adapter" hidden>
-      <h4>ST-Link V3</h4>
-      <label>Performance mode<select id="stlinkPrescaler"><option value="1">High performance</option><option value="2">Normal</option><option value="4">Low power</option></select></label>
-    </div>
-    <div id="rpiOptions" class="adapter" hidden>
-      <h4>Raspberry Pi GPIO <span class="tag">3.3 V · BCM numbering</span></h4>
-      <div id="pins" class="pins"></div>
-      <div class="formrow three">
-        <label>SWCLK<input id="swclk" type="number"></label>
-        <label>SWDIO<input id="swdio" type="number"></label>
-        <label>nRESET<input id="nreset" type="number" placeholder="Optional"></label>
-      </div>
-      <div class="formrow">
-        <label>SWDIO direction<input id="swdioDir" type="number" placeholder="Optional"></label>
-        <label>Wait retries<input id="gpioWaitRetries" type="number" min="1" max="10000"></label>
-      </div>
-      <label class="check"><input id="restorePins" type="checkbox"><span><b>Restore GPIO pins</b><small>Restore pin functions when the probe closes.</small></span></label>
-      <p class="caution">Share ground with the target. Raspberry Pi 5 is not supported.</p>
-    </div>
-
-    <div id="packSequenceOptions" hidden>
-      <h4>CMSIS-Pack debug sequences</h4>
-      <p id="packSequenceIdentity" class="muted small"></p>
-      <label class="check"><input id="packSequencesEnable" type="checkbox"><span><b>Use vendor debug sequences</b><small>Vendor-supplied connect, reset and unlock behaviour.</small></span></label>
-      <div class="inline"><select id="packSequenceRunSelect"><option value="">Select a sequence…</option></select><button id="packSequenceRun" disabled>Run</button></div>
-      <p class="caution">A sequence may reset, unlock, erase or disconnect the MCU.</p>
-    </div>
-
-    <h4>Recovery</h4>
-    <label class="check"><input id="autoUnlock" type="checkbox"><span><b>Automatic unlock</b><small>Mass-erase a secured target when required to unlock it.</small></span></label>
-    <dl class="facts inline"><div><dt>Security</dt><dd id="targetSecurityState">Not connected</dd></div><div><dt>Method</dt><dd id="targetRecoveryMethod">—</dd></div></dl>
-    <p id="targetRecoveryImplementation" class="muted small"></p>
-    <button id="targetUnlock" class="danger" disabled>Mass erase and unlock</button>
-  </div>
-  <div class="drawer-foot">
-    <small class="muted">Saved automatically · applied on next connect</small>
-    <button id="resetOptions" class="ghost">Restore defaults</button>
-  </div>
-</aside>
 
 <dialog id="packDialog" class="dialog pack-dialog">
   <div class="dialog-head"><h2>Add MCU support</h2><button id="closePackDialog" class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
