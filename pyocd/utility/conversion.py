@@ -59,12 +59,18 @@ def byte_list_to_u32le_list(data: Sequence[int], pad: int = 0x00) -> List[int]:
     If the length of the data list is not a multiple of 4, then the pad value is used
     for the additional required bytes.
     """
-    res = []
-    for i in range(len(data) // 4):
-        res.append(data[i * 4 + 0] |
-                   data[i * 4 + 1] << 8 |
-                   data[i * 4 + 2] << 16 |
-                   data[i * 4 + 3] << 24)
+    word_count = len(data) // 4
+    try:
+        # Fast path: unpack in native code. This is on the hot path of every block memory access.
+        res = list(struct.unpack_from(f"<{word_count}I", bytes(data[:word_count * 4])))
+    except (ValueError, TypeError):
+        # Input contains values that are not bytes; keep the historical permissive behaviour.
+        res = []
+        for i in range(word_count):
+            res.append(data[i * 4 + 0] |
+                       data[i * 4 + 1] << 8 |
+                       data[i * 4 + 2] << 16 |
+                       data[i * 4 + 3] << 24)
     remainder = (len(data) % 4)
     if remainder != 0:
         pad_count = 4 - remainder
@@ -73,13 +79,12 @@ def byte_list_to_u32le_list(data: Sequence[int], pad: int = 0x00) -> List[int]:
 
 def u32le_list_to_byte_list(data: Sequence[int]) -> List[int]:
     """@brief Convert a word array into a byte array"""
-    res = []
-    for x in data:
-        res.append((x >> 0) & 0xff)
-        res.append((x >> 8) & 0xff)
-        res.append((x >> 16) & 0xff)
-        res.append((x >> 24) & 0xff)
-    return res
+    try:
+        # Fast path: pack in native code. This is on the hot path of every block memory access.
+        return list(struct.pack(f"<{len(data)}I", *data))
+    except struct.error:
+        # Out of range values are truncated to 32 bits, as before.
+        return list(struct.pack(f"<{len(data)}I", *(x & 0xffffffff for x in data)))
 
 def u16le_list_to_byte_list(data: Sequence[int]) -> List[int]:
     """@brief Convert a halfword array into a byte array"""

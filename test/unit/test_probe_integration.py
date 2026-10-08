@@ -6,7 +6,7 @@ import pytest
 
 from pyocd.core import exceptions
 from pyocd.probe.debug_probe import DebugProbe
-from pyocd.probe.pydapaccess.dap_access_cmsis_dap import READ, _Transfer
+from pyocd.probe.pydapaccess.dap_access_cmsis_dap import READ, WRITE, AP_ACC, _Command, _Transfer
 from pyocd.probe.shared_probe_proxy import SharedDebugProbeProxy
 from pyocd.probe.stlink.stlink import STLink
 from pyocd.probe.stlink_probe import StlinkProbe
@@ -196,3 +196,19 @@ def test_cmsis_dap_block_response_decodes_little_endian_words():
     transfer.add_response(bytes.fromhex("78563412 efcdab90 00000000"))
 
     assert transfer.get_result() == [0x12345678, 0x90abcdef, 0]
+
+
+def test_cmsis_dap_transfer_block_encodes_little_endian_words():
+    cmd = _Command(64)
+    cmd.add(2, WRITE | AP_ACC | 0xC, [0x12345678, 0x1_0000_0001], 0)
+
+    assert bytes(cmd.encode_data()) == bytes.fromhex("06 00 0200 0d 78563412 01000000")
+
+
+def test_cmsis_dap_transfer_encodes_mixed_requests():
+    cmd = _Command(64)
+    cmd.add(1, WRITE | AP_ACC | 0x4, [0x20000000], 0)
+    cmd.add(2, READ | AP_ACC | 0xC, None, 0)
+    cmd.add(1, WRITE | AP_ACC | 0xC, [0xAABBCCDD], 0)
+
+    assert bytes(cmd.encode_data()) == bytes.fromhex("05 00 04 05 00000020 0f 0f 0d ddccbbaa")

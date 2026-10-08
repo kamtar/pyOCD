@@ -100,6 +100,18 @@ def _get_unique_id(interface):
     return interface.get_serial_number()
 
 
+def _u32_values(values):
+    """@brief Return values unchanged if they all fit in 32 bits, otherwise truncated to 32 bits.
+
+    The command encoders historically masked each byte, so out of range values were silently
+    truncated rather than raising an error. Checking the range up front keeps that behaviour
+    while letting the common case be packed in native code.
+    """
+    if values and (min(values) < 0 or max(values) > 0xffffffff):
+        return [value & 0xffffffff for value in values]
+    return values
+
+
 class _Transfer(object):
     """@brief A wrapper object representing a command invoked by the layer above.
 
@@ -331,20 +343,14 @@ class _Command(object):
         pos += 1
         for count, request, write_list in self._data:
             assert write_list is None or len(write_list) <= count
-            write_pos = 0
-            for _ in range(count):
-                buf[pos] = request
-                pos += 1
-                if not request & READ:
-                    buf[pos] = (write_list[write_pos] >> (8 * 0)) & 0xff
-                    pos += 1
-                    buf[pos] = (write_list[write_pos] >> (8 * 1)) & 0xff
-                    pos += 1
-                    buf[pos] = (write_list[write_pos] >> (8 * 2)) & 0xff
-                    pos += 1
-                    buf[pos] = (write_list[write_pos] >> (8 * 3)) & 0xff
-                    pos += 1
-                    write_pos += 1
+            if request & READ:
+                buf[pos:pos + count] = bytes((request,)) * count
+                pos += count
+            else:
+                # Each write is a request byte followed by a little endian data word.
+                struct.pack_into(f"<{'BI' * count}", buf, pos,
+                        *(item for value in _u32_values(write_list[:count]) for item in (request, value)))
+                pos += 5 * count
         return buf[:pos]
 
     def _check_response(self, response):
@@ -426,18 +432,9 @@ class _Command(object):
         for count, request, write_list in self._data:
             assert write_list is None or len(write_list) <= count
             assert request == self._block_request
-            write_pos = 0
             if not request & READ:
-                for _ in range(count):
-                    buf[pos] = (write_list[write_pos] >> (8 * 0)) & 0xff
-                    pos += 1
-                    buf[pos] = (write_list[write_pos] >> (8 * 1)) & 0xff
-                    pos += 1
-                    buf[pos] = (write_list[write_pos] >> (8 * 2)) & 0xff
-                    pos += 1
-                    buf[pos] = (write_list[write_pos] >> (8 * 3)) & 0xff
-                    pos += 1
-                    write_pos += 1
+                struct.pack_into(f"<{count}I", buf, pos, *_u32_values(write_list[:count]))
+                pos += 4 * count
         return buf[:pos]
 
     def _decode_transfer_block_data(self, data):

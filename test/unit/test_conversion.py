@@ -140,6 +140,14 @@ class TestConversionUtilities(object):
         assert byte_list_to_u32le_list(bytearray(b'abcd')) == [0x64636261]
         assert byte_list_to_u32le_list(bytearray(b'a')) == [0x00000061]
 
+    def test_byte_list_to_u32le_list_non_byte_values(self):
+        # Values outside 0..255 are not valid bytes, but are still combined as before.
+        assert byte_list_to_u32le_list([0x100, 0, 0, 0]) == [0x100]
+
+    def test_u32le_list_to_byte_list_truncates_out_of_range(self):
+        assert u32le_list_to_byte_list([0x1_2345_6789, -1]) == [
+            0x89, 0x67, 0x45, 0x23, 0xff, 0xff, 0xff, 0xff]
+
     def test_u32leListToByteList(self):
         data = [
             0x03020100,

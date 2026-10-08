@@ -53,3 +53,35 @@ def test_compute_crcs_rejects_unrepresentable_page_index_before_loading_analyzer
         flash.compute_crcs([(0x10000, 1)])
 
     flash.target.write_memory_block32.assert_not_called()
+
+
+def _flash_waiting_on_halted_target(canary):
+    from pyocd.core.target import Target
+
+    flash = object.__new__(Flash)
+    flash.flash_algo_debug = False
+    flash.begin_stack = 0x20002000
+    flash.end_stack = 0x20001000
+    target = mock.Mock()
+    target.get_state.return_value = Target.State.HALTED
+    target.read32.return_value = lambda: canary
+    target.read_core_register.return_value = 0
+    flash.target = target
+    return flash
+
+
+def test_wait_for_completion_defers_stack_canary_read():
+    flash = _flash_waiting_on_halted_target(Flash._STACK_CANARY)
+
+    assert flash.wait_for_completion(timeout=1.0) == 0
+
+    # The canary read is queued so it is sent along with the R0 read instead of on its own.
+    flash.target.read32.assert_called_once_with(0x20001000, now=False)
+    flash.target.read_core_register.assert_called_once_with('r0')
+
+
+def test_wait_for_completion_detects_stack_overflow():
+    flash = _flash_waiting_on_halted_target(0)
+
+    with pytest.raises(FlashFailure, match="overflowed stack"):
+        flash.wait_for_completion(timeout=1.0)

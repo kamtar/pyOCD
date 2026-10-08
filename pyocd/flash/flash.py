@@ -684,13 +684,18 @@ class Flash:
             raise exceptions.FlashFailure("target was not halted as expected after calling "
                                           f"flash algorithm routine (IPSR={ipsr})")
 
+        # Queue the stack canary read so it shares a probe round trip with the R0 read below.
+        canary_cb = self.target.read32(self.end_stack, now=False) if self.end_stack is not None else None
+
+        result = self.target.read_core_register('r0')
+
         # Check stack canary if we have one.
-        if self.end_stack is not None:
-            canary = self.target.read32(self.end_stack)
+        if canary_cb is not None:
+            canary = canary_cb()
             if canary != self._STACK_CANARY:
                 raise exceptions.FlashFailure(f"flash algorithm overflowed stack ({self.begin_stack - self.end_stack} bytes)")
 
-        return self.target.read_core_register('r0')
+        return result
 
     def _call_function_and_wait(self, pc, r0=None, r1=None, r2=None, r3=None, init=False, timeout=None):
         self._call_function(pc, r0, r1, r2, r3, init)
