@@ -1,6 +1,6 @@
 /* pyOCD web UI.
  *
- * Layout: a session bar (MCU, clock, options, GDB, connect) that turns into
+ * Layout: a session bar (MCU, connect mode, GDB, options, connect) that turns into
  * live target controls once connected; Home / Flash / Debug / Settings views;
  * a bottom dock with the log, console and SWD traffic; and a drawer holding
  * every connection option.
@@ -171,7 +171,7 @@ const fail = error => toast(error.message || String(error), true);
 // the server; `adapter` limits it to one probe kind.
 const FIELDS = [
   {id: 'protocol', key: 'dap_protocol', def: () => connectionDefaults.dap_protocol},
-  {id: 'connectMode', key: 'connect_mode', def: () => connectionDefaults.connect_mode},
+  {id: 'connectMode', key: 'connect_mode', def: () => connectionDefaults.connect_mode, inBar: true},
   {id: 'resetMethod', key: 'reset_method', def: 'hardware'},
   {id: 'resumeOnDisconnect', section: 'options', key: 'resume_on_disconnect', def: true},
   {id: 'swjEnable', section: 'options', key: 'dap_swj_enable', def: true},
@@ -247,9 +247,14 @@ async function saveConfig() {
     if (packSequenceInfo?.target !== savedProfile.target_override) await loadPackSequenceInfo();
   } catch (error) { fail(error); }
 }
+// Counts drawer settings that differ from their defaults. Fields shown in the
+// session bar are already visible, so they don't count.
 function updateOptionsBadge() {
-  let count = 0;
+  const clockChanged = +$('#frequency').value !== +connectionDefaults.frequency;
+  $('#frequency').closest('label').classList.toggle('is-modified', clockChanged);
+  let count = clockChanged ? 1 : 0;
   for (const f of FIELDS) {
+    if (f.inBar) continue;
     const el = $('#' + f.id), label = el.closest('label');
     const changed = fieldApplies(f) && String(readField(f) ?? '') !== String(fieldDefault(f) ?? '');
     label?.classList.toggle('is-modified', changed);
@@ -261,7 +266,9 @@ function updateOptionsBadge() {
   $('#unlockCaution').hidden = !$('#autoUnlock').checked || state.connected;
 }
 async function restoreDefaults() {
-  for (const f of FIELDS) writeField(f, fieldDefault(f));
+  for (const f of FIELDS) if (!f.inBar) writeField(f, fieldDefault(f));
+  $('#frequency').value = connectionDefaults.frequency;
+  updateClock();
   renderPins();
   await saveConfig();
   toast('Connection options restored to defaults');
@@ -414,7 +421,6 @@ function rememberTarget(name) {
 
 function updateClock() {
   const hz = +$('#frequency').value;
-  $('#clockLabel').textContent = fmtClock(hz);
   $('#frequencyOut').value = fmtClock(hz);
   $$('[data-clock]').forEach(b => b.classList.toggle('active', +b.dataset.clock === hz));
 }
@@ -1353,8 +1359,7 @@ function wire() {
   $('#probeQuick').onchange = e => onProbeChanged(e.target.value);
   $('#probeSelect').onchange = e => onProbeChanged(e.target.value);
   $('#probeMissing').onclick = openDrawer;
-  $('#clockButton').onclick = () => togglePopover($('#clockButton'), $('#clockPopover'));
-  $('#frequency').oninput = updateClock;
+  $('#frequency').oninput = () => { updateClock(); updateOptionsBadge(); };
   $('#frequency').onchange = saveConfig;
   $$('[data-clock]').forEach(b => b.onclick = () => { $('#frequency').value = b.dataset.clock; updateClock(); saveConfig(); });
   $('#targetSummary').onclick = () => togglePopover($('#targetSummary'), $('#targetPopover'));

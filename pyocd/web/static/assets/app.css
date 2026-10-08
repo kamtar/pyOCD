@@ -161,7 +161,8 @@ select { padding-right: 4px; }
   position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow);
 }
-.clock-popover { width: 18rem; display: grid; gap: 10px; }
+.mode-select { width: auto; background: transparent; border-color: var(--line-strong); color: var(--text); cursor: pointer; }
+.mode-select:hover { background: var(--surface-2); }
 .presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .presets button { padding: 0 4px; font-size: .88rem; }
 .presets button.active { border-color: var(--accent); color: var(--accent); }
@@ -208,7 +209,7 @@ select { padding-right: 4px; }
 .rail button:hover { color: var(--text); background: var(--surface-2) !important; }
 .rail button.active { color: var(--text); background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
 main { min-height: 0; overflow: auto; padding: 16px 20px 24px; }
-.view { display: none; max-width: 1240px; margin: 0 auto; }
+.view { display: none; max-width: 1240px; }
 .view.active { display: block; }
 .view > * + * { margin-top: 14px; }
 
@@ -336,7 +337,7 @@ details.collapsible[open] > summary { margin-bottom: 12px; }
 .panel-head .inline input[type="number"] { width: 5rem; }
 
 /* Settings */
-.settings { display: grid; gap: 14px; max-width: 760px; margin: 0 auto; }
+.settings { display: grid; gap: 14px; max-width: 760px; }
 .row-field { display: grid; grid-template-columns: 7rem 1fr; align-items: center; gap: 12px; }
 .row-field > span { color: var(--muted); }
 .row-field .range { max-width: 22rem; }

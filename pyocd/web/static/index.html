@@ -61,20 +61,12 @@ try {
     <button id="probeMissing" class="chip warn" hidden title="Plug in a debug probe. The list refreshes automatically.">
       <svg class="i"><use href="#i-warn"/></svg>No probe
     </button>
-    <div class="pop-anchor">
-      <button id="clockButton" class="chip" aria-haspopup="dialog" aria-expanded="false" title="Debug clock">
-        <svg class="i"><use href="#i-clock"/></svg><span id="clockLabel">1 MHz</span>
-      </button>
-      <div id="clockPopover" class="popover clock-popover" hidden>
-        <div class="presets">
-          <button data-clock="100000">100 kHz</button>
-          <button data-clock="1000000">1 MHz</button>
-          <button data-clock="4000000">4 MHz</button>
-          <button data-clock="10000000">10 MHz</button>
-        </div>
-        <div class="range"><input id="frequency" type="range" min="50000" max="10000000" step="50000" value="1000000" aria-label="Debug clock"><output id="frequencyOut">1.00 MHz</output></div>
-      </div>
-    </div>
+    <select id="connectMode" class="mode-select" title="Connect mode" aria-label="Connect mode">
+      <option value="under-reset">Under reset</option>
+      <option value="halt">Halt on connect</option>
+      <option value="attach">Attach</option>
+      <option value="pre-reset">Pre-reset</option>
+    </select>
   </div>
 
   <div id="barLive" class="bar-group" hidden>
@@ -98,10 +90,6 @@ try {
     </div>
   </div>
 
-  <span class="spacer"></span>
-  <span id="otherUsers" class="chip warn" role="status" hidden></span>
-  <span id="busyChip" class="chip busy" hidden><i class="spin"></i><span id="busyLabel">Working…</span></span>
-
   <div class="gdb-group">
     <label class="switch" title="GDB server on port 3030">
       <input id="gdbSwitch" type="checkbox"><i></i><span>GDB</span>
@@ -113,6 +101,8 @@ try {
     <svg class="i"><use href="#i-sliders"/></svg><span id="optionsBadge" class="badge" hidden></span>
   </button>
   <button id="connectBtn" class="primary connect-btn">Connect</button>
+  <span id="otherUsers" class="chip warn" role="status" hidden></span>
+  <span id="busyChip" class="chip busy" hidden><i class="spin"></i><span id="busyLabel">Working…</span></span>
 </header>
 
 <div class="shell">
@@ -344,10 +334,16 @@ try {
     <div class="actions"><button id="probeResetBtn" title="Pulse the probe nRESET pin without connecting">Pulse reset pin</button></div>
 
     <h4>Link</h4>
-    <div class="formrow">
-      <label>Transport<select id="protocol"><option value="default">Automatic</option><option value="swd">SWD</option><option value="jtag">JTAG</option></select></label>
-      <label>Connect mode<select id="connectMode"><option value="halt">Halt on connect</option><option value="attach">Attach</option><option value="under-reset">Under reset</option><option value="pre-reset">Pre-reset</option></select></label>
-    </div>
+    <label>Transport<select id="protocol"><option value="default">Automatic</option><option value="swd">SWD</option><option value="jtag">JTAG</option></select></label>
+    <label>Debug clock
+      <div class="range"><input id="frequency" type="range" min="50000" max="10000000" step="50000" value="1000000" aria-label="Debug clock"><output id="frequencyOut">1 MHz</output></div>
+      <div class="presets">
+        <button type="button" data-clock="100000">100 kHz</button>
+        <button type="button" data-clock="1000000">1 MHz</button>
+        <button type="button" data-clock="4000000">4 MHz</button>
+        <button type="button" data-clock="10000000">10 MHz</button>
+      </div>
+    </label>
     <label class="check"><input id="resumeOnDisconnect" type="checkbox"><span><b>Run on disconnect</b><small>Resume execution when the session closes.</small></span></label>
     <label class="check"><input id="swjEnable" type="checkbox"><span><b>SWJ switch sequence</b><small>Switch between SWD and JTAG automatically.</small></span></label>
     <label class="check"><input id="swjDormant" type="checkbox"><span><b>Dormant-state sequence</b><small>ADIv5.2 transition where supported.</small></span></label>
