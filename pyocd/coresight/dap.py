@@ -1,5 +1,5 @@
 # pyOCD debugger
-# Copyright (c) 2015-2020,2025 Arm Limited
+# Copyright (c) 2015-2020,2025-2026 Arm Limited
 # Copyright (c) 2021-2023 Chris Reed
 # Copyright (c) 2022 Clay McClure
 # Copyright (c) 2022 Toshiba Electronic Devices & Storage Corporation
@@ -29,7 +29,6 @@ from ..core.target import Target
 from ..core.target_delegate import DelegateHavingMixIn
 from ..probe.debug_probe import DebugProbe
 from ..probe.swj import SWJSequenceSender
-from .ap import APSEL_APBANKSEL
 from ..utility.sequencer import CallSequence
 from ..utility.timeout import Timeout
 
@@ -86,6 +85,11 @@ CTRLSTAT_WDATAERR = 0x00000080
 
 # DP SELECT register fields.
 SELECT_DPBANKSEL_MASK = 0x0000000f
+# ADIv5 AP SELECT register fields.
+SELECT_APSEL_MASK = 0xff000000
+SELECT_APBANKSEL_MASK = 0x000000f0
+SELECT_AP_MASK = SELECT_APSEL_MASK | SELECT_APBANKSEL_MASK
+# ADIv6 AP SELECT register fields.
 SELECT_APADDR_MASK = 0xfffffff0
 
 DPIDR_REVISION_MASK = 0xf0000000
@@ -316,6 +320,7 @@ class DebugPort(DelegateHavingMixIn):
         self.aps: Dict[APAddressBase, AccessPort] = {}
         self._access_number: int = 0
         self._cached_dp_select: Optional[int] = None
+        self._cached_ap_cb: Dict[int, Callable[[int], None]] = {}
         self._protocol: Optional[DebugProbe.Protocol] = None
         self._probe_managed_ap_select: bool = False
         self._probe_managed_dpbanksel: bool = False
@@ -456,18 +461,23 @@ class DebugPort(DelegateHavingMixIn):
         return cst.call_pre_discovery_debug_sequence('DebugPortStop')
 
     def _connect(self) -> None:
-        # Connect the probe.
-        probe_conn = ProbeConnector(self.probe)
-        probe_conn.connect(self._protocol)
+        try:
+            # Connect the probe.
+            probe_conn = ProbeConnector(self.probe)
+            probe_conn.connect(self._protocol)
 
-        # Attempt to connect DP.
-        connector = DPConnector(self.probe)
-        if not self.connect_debug_port_hook():
-            connector.connect()
-            self.dpidr = connector.idr
-        else:
-            # We still need to read the IDR for our own use.
-            self.dpidr = connector.read_idr()
+            # Attempt to connect DP.
+            connector = DPConnector(self.probe)
+            if not self.connect_debug_port_hook():
+                connector.connect()
+                self.dpidr = connector.idr
+            else:
+                # We still need to read the IDR for our own use.
+                self.dpidr = connector.read_idr()
+        except exceptions.Error as err:
+            LOG.error("%s", err)
+            raise exceptions.Error(
+                "Target not detected. Check connection to target. Potentially reduce debug clock.") from err
         assert self.dpidr
 
         # Report on DP version.
@@ -662,7 +672,9 @@ class DebugPort(DelegateHavingMixIn):
             self.session.notify(Target.Event.PRE_RESET, self)
 
         self.probe.reset()
-        self.post_reset_recovery()
+        # Check if we are performing a pre-reset; only do post-reset recovery if not.
+        if not self.session.context_state.is_performing_pre_reset:
+            self.post_reset_recovery()
 
         if send_notifications:
             self.session.notify(Target.Event.POST_RESET, self)
@@ -723,7 +735,6 @@ class DebugPort(DelegateHavingMixIn):
 
         # Update the SELECT register and cache.
         self.write_dp(DP_SELECT, select)
-        self._cached_dp_select = select
 
     def _set_dpbanksel(self, addr: int, is_write: bool) -> bool:
         """@brief Updates the DPBANKSEL field of the SELECT register as required.
@@ -836,12 +847,19 @@ class DebugPort(DelegateHavingMixIn):
         try:
             TRACE.debug("write_dp:%06d (addr=0x%08x) = 0x%08x", num, addr, data)
             self.probe.write_dp(addr & DPADDR_MASK, data)
+            # Update cached DP SELECT if writing to it.
+            if (addr & DPADDR_MASK) == DP_SELECT:
+                self._cached_dp_select = data
         except exceptions.TargetError as error:
             self._handle_error(error, num)
             raise
         finally:
             if did_lock:
                 self.unlock()
+
+    def _update_ap_cache(self, addr: int, value: int) -> None:
+        if (cb := self._cached_ap_cb.get(addr)) is not None:
+            cb(value)
 
     def _select_ap(self, addr: int) -> bool:
         """@brief Write DP_SELECT to choose the given AP.
@@ -858,7 +876,7 @@ class DebugPort(DelegateHavingMixIn):
         # Write DP SELECT to select the probe.
         self.lock()
         if self.adi_version == ADIVersion.ADIv5:
-            self._write_dp_select(APSEL_APBANKSEL, addr & APSEL_APBANKSEL)
+            self._write_dp_select(SELECT_AP_MASK, addr & SELECT_AP_MASK)
         elif self.adi_version == ADIVersion.ADIv6:
             self._write_dp_select(SELECT_APADDR_MASK, addr & SELECT_APADDR_MASK)
         else:
@@ -875,6 +893,7 @@ class DebugPort(DelegateHavingMixIn):
             did_lock = self._select_ap(addr)
             TRACE.debug("write_ap:%06d (addr=0x%08x) = 0x%08x", num, addr, data)
             self.probe.write_ap(addr, data)
+            self._update_ap_cache(addr, data)
         except exceptions.TargetError as error:
             self._handle_error(error, num)
             raise
@@ -920,6 +939,7 @@ class DebugPort(DelegateHavingMixIn):
         def read_ap_cb() -> int:
             try:
                 result = result_cb()
+                self._update_ap_cache(addr, result)
                 TRACE.debug("read_ap:%06d %s(addr=0x%08x) -> 0x%08x", num, "" if now else "...", addr, result)
                 return result
             except exceptions.TargetError as error:

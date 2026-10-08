@@ -32,6 +32,7 @@ from ..utility.sequencer import CallSequence
 from ..target.pack.flm_region_builder import FlmFlashRegionBuilder
 
 if TYPE_CHECKING:
+    from ..core.core_target import CoreTarget
     from ..core.session import Session
     from .ap import (APAddressBase, AccessPort)
     from ..debug.svd.model import SVDDevice
@@ -416,24 +417,36 @@ class CoreSightTarget(SoCTarget):
             if seq.name == name:
                 delegate.run_sequence(name, pname=seq.pname)
 
-    def trace_capture(self) -> None:
-        changed = False
-        if self.session.ctrace_run is not None:
-            changed = self.session.ctrace_run.apply(self)
+    def trace_capture(self, core: Optional["CoreTarget"] = None) -> None:
+        pname = core.node_name if core else None
 
         result = self.call_delegate('trace_capture', target=self, mode=0)
-        if not result and self.has_debug_sequence('TraceCapture'):
+        if not result and self.has_debug_sequence('TraceCapture', pname=pname):
             assert self.debug_sequence_delegate
             if self.debug_sequence_delegate.trace_setup == TraceSetup.FULL:
-                self.debug_sequence_delegate.run_sequence('TraceCapture')
-        self.session.notify(self.session.Event.TRACE_DATA_CAPTURE, self.session, changed)
+                self.debug_sequence_delegate.run_sequence('TraceCapture', pname=pname)
 
-    def trace_flush(self) -> None:
+        if (ctrace_run := self.session.ctrace_run) is not None:
+            with ctrace_run.update():
+                changed = ctrace_run.load()
+                if changed:
+                    ctrace_run.apply_disable(self)
+                self.session.notify(self.session.Event.TRACE_DATA_CAPTURE, self.session, ctrace_run.reloaded)
+                if changed:
+                    ctrace_run.apply_refs(self)
+                ctrace_run.itm_force_sync(core if core is not None else self.primary_core)
+        else:
+            self.session.notify(self.session.Event.TRACE_DATA_CAPTURE, self.session, False)
+
+    def trace_flush(self, core: Optional["CoreTarget"] = None) -> None:
+        pname = core.node_name if core else None
+
         result = self.call_delegate('trace_flush', target=self, mode=0)
-        if not result and self.has_debug_sequence('TraceFlush'):
+        if not result and self.has_debug_sequence('TraceFlush', pname=pname):
             assert self.debug_sequence_delegate
             if self.debug_sequence_delegate.trace_setup == TraceSetup.FULL:
-                self.debug_sequence_delegate.run_sequence('TraceFlush')
+                self.debug_sequence_delegate.run_sequence('TraceFlush', pname=pname)
+
         self.session.notify(self.session.Event.TRACE_DATA_FLUSH, self.session)
 
     def write_trace_buffer(self, name: str, data: bytes) -> int:
