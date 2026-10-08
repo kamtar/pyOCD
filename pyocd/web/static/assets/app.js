@@ -241,28 +241,23 @@ function applyProfile(profile) {
 }
 async function saveConfig() {
   savedProfile = {...savedProfile, ...connectionProfile()};
-  updateOptionsBadge();
+  markChangedOptions();
   try {
     await api('/config', {method: 'PUT', body: JSON.stringify(savedProfile), waiting: false});
     if (packSequenceInfo?.target !== savedProfile.target_override) await loadPackSequenceInfo();
   } catch (error) { fail(error); }
 }
-// Counts panel settings that differ from their defaults. Fields shown in the
-// session bar are already visible, so they don't count.
-function updateOptionsBadge() {
+// Marks panel settings that differ from their defaults. Fields shown in the
+// session bar are already visible, so they are not marked.
+function markChangedOptions() {
   const clockChanged = +$('#frequency').value !== +connectionDefaults.frequency;
   $('#frequency').closest('label').classList.toggle('is-modified', clockChanged);
-  let count = clockChanged ? 1 : 0;
   for (const f of FIELDS) {
     if (f.inBar) continue;
-    const el = $('#' + f.id), label = el.closest('label');
+    const label = $('#' + f.id).closest('label');
     const changed = fieldApplies(f) && String(readField(f) ?? '') !== String(fieldDefault(f) ?? '');
     label?.classList.toggle('is-modified', changed);
-    if (changed) count++;
   }
-  $('#optionsBadge').hidden = !count;
-  $('#optionsBadge').textContent = count;
-  $('#optionsBtn').title = count ? `Connection options · ${count} changed from default` : 'Connection options';
   $('#unlockCaution').hidden = !$('#autoUnlock').checked || state.connected;
 }
 async function restoreDefaults() {
@@ -292,6 +287,11 @@ function shortProbeNames(boards) {
 async function loadDiscovery() {
   let boards;
   try { boards = (await api('/probes', {waiting: false})).boards || []; } catch (error) { return; }
+  // A probe in use by the session drops out of enumeration; keep it listed.
+  const active = state.connected && state.probe;
+  if (active && !boards.some(b => b.unique_id === active.unique_id)) {
+    boards.unshift({unique_id: active.unique_id, info: `${active.vendor ? active.vendor + ' ' : ''}${active.product || 'Probe'} (in use)`, vendor_name: active.vendor, product_name: active.product});
+  }
   const signature = JSON.stringify(boards.map(b => [b.unique_id, b.info]));
   if (signature === probeSignature) return;
   probeSignature = signature;
@@ -315,7 +315,7 @@ function updateProbeFields() {
   const panels = {'cmsis-dap': '#cmsisDapOptions', jlink: '#jlinkOptions', stlink: '#stlinkOptions', rpi: '#rpiOptions'};
   for (const [name, selector] of Object.entries(panels)) $(selector).hidden = name !== kind;
   $('#probeResetBtn').disabled = !$('#probeSelect').value || state.connected;
-  updateOptionsBadge();
+  markChangedOptions();
 }
 function onProbeChanged(value) {
   $('#probeSelect').value = value;
@@ -559,7 +559,7 @@ function render(snapshot) {
   updateDumpInputs();
   updateRecoveryState();
   updatePackSequenceRunState();
-  updateOptionsBadge();
+  markChangedOptions();
   renderSwdSummary(snapshot.swd_traffic || {});
   const others = snapshot.web_clients?.others || 0;
   $('#otherUsers').hidden = !others;
@@ -1358,7 +1358,7 @@ function wire() {
   $('#probeQuick').onchange = e => onProbeChanged(e.target.value);
   $('#probeSelect').onchange = e => onProbeChanged(e.target.value);
   $('#probeMissing').onclick = openOptions;
-  $('#frequency').oninput = () => { updateClock(); updateOptionsBadge(); };
+  $('#frequency').oninput = () => { updateClock(); markChangedOptions(); };
   $('#frequency').onchange = saveConfig;
   $$('[data-clock]').forEach(b => b.onclick = () => { $('#frequency').value = b.dataset.clock; updateClock(); saveConfig(); });
   $('#targetSummary').onclick = () => togglePopover($('#targetSummary'), $('#targetPopover'));
@@ -1393,7 +1393,7 @@ function wire() {
   $('#probeResetBtn').onclick = pulseResetPin;
   for (const f of FIELDS) $('#' + f.id).addEventListener('change', saveConfig);
   ['swclk', 'swdio', 'nreset'].forEach(id => $('#' + id).addEventListener('input', renderPins));
-  $('#autoUnlock').addEventListener('change', updateOptionsBadge);
+  $('#autoUnlock').addEventListener('change', markChangedOptions);
   $('#packSequenceRunSelect').onchange = updatePackSequenceRunState;
   $('#packSequenceRun').onclick = runSelectedPackSequence;
   $('#targetUnlock').onclick = unlockTarget;

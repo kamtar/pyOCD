@@ -22,7 +22,7 @@ try {
     <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9h-5v-6H9v6H4z"/></symbol>
     <symbol id="i-flash" viewBox="0 0 24 24"><path d="M12 15V3m-5 5 5-5 5 5M4 14v6h16v-6"/></symbol>
     <symbol id="i-debug" viewBox="0 0 24 24"><path d="M8 7a4 4 0 0 1 8 0M7 10h10v5a5 5 0 0 1-10 0zM12 10v10M3 13h4m10 0h4M4 7l3 3m13-3-3 3M4 20l3-3m13 3-3-3"/></symbol>
-    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10m4 0h2M4 12h4m4 0h8M4 18h12m4 0h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
     <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/></symbol>
     <symbol id="i-probe" viewBox="0 0 24 24"><path d="M9 2h6v6H9zM7 8h10v7l-3 3h-4l-3-3zm5 10v4"/></symbol>
@@ -98,7 +98,7 @@ try {
     <button id="copyEndpoint" class="icon-btn" hidden title="Copy GDB endpoint" aria-label="Copy GDB endpoint"><svg class="i"><use href="#i-copy"/></svg></button>
   </div>
   <button id="optionsBtn" class="icon-btn options-btn" title="Connection options" aria-label="Connection options">
-    <svg class="i"><use href="#i-sliders"/></svg><span id="optionsBadge" class="badge" hidden></span>
+    <svg class="i"><use href="#i-gear"/></svg>
   </button>
   <button id="connectBtn" class="primary connect-btn">Connect</button>
   <span id="otherUsers" class="chip warn" role="status" hidden></span>
@@ -203,7 +203,7 @@ try {
     <button data-view="flash"><svg class="i"><use href="#i-flash"/></svg><span>Flash</span></button>
     <button data-view="debug"><svg class="i"><use href="#i-debug"/></svg><span>Debug</span></button>
     <span class="grow"></span>
-    <button data-view="settings"><svg class="i"><use href="#i-settings"/></svg><span>Settings</span></button>
+    <button data-view="settings"><svg class="i"><use href="#i-sliders"/></svg><span>Settings</span></button>
   </nav>
 
   <main id="main">
@@ -355,7 +355,7 @@ try {
         <article class="panel">
           <div class="panel-head"><h3>Connection and device support</h3></div>
           <div class="link-rows">
-            <button data-open-options><span><b>Connection options</b><small>Probe, transport, reset, flashing, recovery</small></span><svg class="i"><use href="#i-sliders"/></svg></button>
+            <button data-open-options><span><b>Connection options</b><small>Probe, transport, reset, flashing, recovery</small></span><svg class="i"><use href="#i-gear"/></svg></button>
             <button data-open-packs><span><b>Add MCU support</b><small>Install a CMSIS-Pack from the device catalog</small></span><svg class="i"><use href="#i-plus"/></svg></button>
           </div>
         </article>
