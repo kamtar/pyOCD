@@ -1,11 +1,442 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#07120d"><title>pyOCD Control Center</title><script>try{const t=localStorage.getItem('pyocd-ui-theme')||'green',u=localStorage.getItem('pyocd-ui-style')||(t==='green'?'classic':'workbench'),s=Math.min(1.25,Math.max(.8,Number(localStorage.getItem('pyocd-ui-scale'))||1));document.documentElement.dataset.theme=t;document.documentElement.dataset.uiStyle=u;document.documentElement.style.setProperty('--ui-scale',s)}catch(e){}</script><link rel="stylesheet" href="/assets/app.css"><link rel="stylesheet" href="/assets/connection.css"><link rel="stylesheet" href="/assets/theme.css"><link rel="stylesheet" href="/assets/debug.css"><link rel="stylesheet" href="/assets/waiting.css"><link rel="stylesheet" href="/assets/continuous.css"><link rel="stylesheet" href="/assets/mobile.css"><link rel="stylesheet" href="/assets/themes.css"><link rel="stylesheet" href="/assets/dense.css?v=2"><link rel="stylesheet" href="/assets/reference.css?v=2"><link rel="stylesheet" href="/assets/workspace.css?v=1"></head>
-<body><div id="toast" aria-live="polite"></div><button id="restartPyocd" class="restart-pyocd" title="Restart the pyOCD process and release the debug probe">↻ Restart pyOCD</button><div id="waitingOverlay" class="waiting-overlay" role="status" aria-live="polite" aria-busy="true" hidden><div class="waiting-card"><i></i><div><b id="waitingTitle">Waiting for pyOCD…</b><small>The operation is still running.</small></div></div></div>
-<header><div class="brand"><i>p</i><b>pyOCD</b><small>CONTROL CENTER</small></div><div class="statusbar"><button id="statePill" class="pill offline" title="Connect to target">● Disconnected</button><div class="topmcu"><small>MCU</small><select id="recentTarget"><option value="">Select MCU…</option><option value="__search">Search targets…</option></select></div><button id="topState" class="topmetric" title="Halt or continue target" disabled><small>STATE</small><b id="mcuState">—</b></button><label>LINK<b id="linkMetric">—</b></label><label>CORE<b id="coreMetric">—</b></label><button id="topGdb" class="topmetric" title="Start or stop GDB server"><small>GDB</small><b id="gdbMetric">Off</b></button><i class="top-separator" aria-hidden="true"></i><button id="topReset" class="topmetric resetmetric" title="Pulse reset or reset and run"><small>RESET</small><b>↻</b></button></div><label class="topelf"><input id="topElfInput" type="file" accept=".elf,.axf"><span>Attach ELF</span></label><button id="connectTop" hidden>Connect</button></header>
-<div class="shell"><aside><nav id="nav"><button class="active" data-tab="overview">◫ Overview</button><button data-tab="connection">⌁ Connection</button><button data-tab="program">⇧ Program & dump</button><button data-tab="debug">◎ Debug</button><button data-tab="console">›_ Console</button><button data-tab="logs">≡ pyOCD log</button></nav></aside><main>
-<section id="overview" class="tab active"><div class="heading"><div><em>WORKSPACE</em><h1>Hardware at a glance</h1><p>One calm view of the target, probe, and active services.</p></div><div class="actions"><button data-action="halt">Halt</button><button data-action="reset-halt">Reset & halt</button><button data-action="resume" class="accent">Run</button></div></div><div class="hero"><article class="card target"><span id="targetBadge" class="tag">OFFLINE</span><h2 id="heroTarget">Waiting for a target</h2><p id="heroVendor">Connect a probe to inspect the MCU.</p><div class="specs"><label>RUN STATE<b id="runState">Unknown</b></label><label>DEBUG PROBE<b id="heroProbe">—</b></label><label>TRANSPORT<b id="heroLink">—</b></label><label>FREQUENCY<b id="heroFreq">—</b></label></div></article><article class="card"><div class="title"><div><em>SERVICE</em><h3>GDB server</h3></div><input id="gdbSwitch" type="checkbox"></div><div class="port">localhost <b id="gdbPort">:3333</b></div><p class="muted">Remote debugging endpoint for your IDE.</p><div class="row"><span>Connected clients</span><b id="gdbClients">0</b></div></article></div><div class="cols"><article class="card"><div class="title"><h3>Target memory map</h3></div><div id="memoryMap" class="empty">Connect to discover memory regions.</div></article><article class="card"><div class="title"><h3>Recent operations</h3></div><div id="jobs" class="empty">Nothing has run yet.</div></article></div></section>
-<section id="connection" class="tab"><div class="heading"><div><em>SETUP</em><h1>Connection</h1><p>Choose hardware and tune the link. Settings apply on connect.</p></div></div><div class="cols setup"><article class="card form"><h3>Basic connection</h3><label>Debug adapter<select id="probeSelect"><option value="">Scanning…</option></select></label><label class="target-field">Target MCU<span class="target-combobox"><input id="targetSelect" autocomplete="off" placeholder="Type or choose a part number…" role="combobox" aria-autocomplete="list" aria-controls="targetOptions" aria-expanded="false"><span id="targetOptions" class="target-options" role="listbox" hidden></span></span></label><div class="formrow"><label>Transport<select id="protocol"><option value="default">Automatic</option><option value="swd">SWD</option><option value="jtag">JTAG</option></select></label><label>Connect mode<select id="connectMode"><option value="halt">Halt on connect</option><option value="attach">Attach</option><option value="under-reset" selected>Under reset</option><option value="pre-reset">Pre-reset</option></select></label></div><label>Debug clock<div class="range"><input id="frequency" type="range" min="50000" max="10000000" step="50000" value="1000000"><output id="frequencyOut">1.00 MHz</output></div></label><div class="formactions"><button id="probeResetBtn" title="Pulse the adapter nRESET pin without connecting" disabled>Pulse reset pin</button><button id="disconnectBtn">Disconnect</button><button id="connectBtn" class="primary">Connect target</button></div></article><article id="advancedCard" class="card form"><h3>Advanced link settings</h3><p id="adapterHint" class="muted">No adapter-specific settings are required.</p><details class="advanced-group"><summary>Reset & timing</summary><div class="advanced-content"><label>Reset method<select id="resetMethod"><option value="hardware">Reset pin (default)</option><option value="core">Core reset over SWD</option></select><small class="muted">Used for target resets, reset-and-halt, and programming.</small></label><div class="formrow"><label>Reset hold time<input id="resetHoldTime" type="number" min="0" max="10" step="0.01" value="0.1"><small class="muted">Seconds reset remains asserted.</small></label><label>Post-reset delay<input id="resetPostDelay" type="number" min="0" max="10" step="0.01" value="0.1"><small class="muted">Delay after releasing reset.</small></label></div></div></details><details class="advanced-group"><summary>Link behavior</summary><div class="advanced-content advanced-checks"><label class="check"><input id="autoUnlock" type="checkbox" checked><span><b>Automatic unlock</b><small>Erase a secured target when required to unlock it.</small></span></label><label class="check"><input id="resumeOnDisconnect" type="checkbox" checked><span><b>Run on disconnect</b><small>Resume execution when the debug session closes.</small></span></label><label class="check"><input id="swjEnable" type="checkbox" checked><span><b>Send SWJ switch sequence</b><small>Switch between SWD and JTAG automatically.</small></span></label><label class="check"><input id="swjDormant" type="checkbox"><span><b>Use dormant-state sequence</b><small>Use the ADIv5.2 transition where supported.</small></span></label></div></details><details id="cmsisDapOptions" class="advanced-group adapter-options hidden"><summary>CMSIS-DAP adapter</summary><div class="advanced-content"><label class="check"><input id="cmsisPreferV1" type="checkbox"><span><b>Prefer CMSIS-DAP v1</b><small>Use HID v1 when both versions are exposed.</small></span></label><label class="check"><input id="cmsisDeferred" type="checkbox" checked><span><b>Deferred transfers</b><small>Queue transfers for better throughput.</small></span></label><label class="check"><input id="cmsisLimitPackets" type="checkbox"><span><b>Limit in-flight packets</b><small>Compatibility mode for probes that mishandle queues.</small></span></label></div></details><details id="jlinkOptions" class="advanced-group adapter-options hidden"><summary>SEGGER J-Link adapter</summary><div class="advanced-content"><label class="check"><input id="jlinkPower" type="checkbox" checked><span><b>Control target power</b><small>Enable power while connected and disable it on disconnect.</small></span></label></div></details><details id="stlinkOptions" class="advanced-group adapter-options hidden"><summary>ST-Link V3 adapter</summary><div class="advanced-content"><label>Performance mode<select id="stlinkPrescaler"><option value="1">High performance</option><option value="2">Normal</option><option value="4">Low power</option></select></label></div></details><details id="rpiOptions" class="advanced-group adapter-options hidden"><summary>Raspberry Pi GPIO header</summary><div class="advanced-content"><div class="title"><span class="muted">BCM pin numbering</span><span class="tag">3.3 V</span></div><div id="pins" class="pins"></div><div class="formrow"><label>SWCLK<input id="swclk" type="number" value="20"></label><label>SWDIO<input id="swdio" type="number" value="21"></label><label>nRESET<input id="nreset" type="number" value="16" placeholder="Optional"></label></div><div class="formrow"><label>SWDIO direction<input id="swdioDir" type="number" placeholder="Optional"></label><label>Wait retries<input id="gpioWaitRetries" type="number" min="1" max="10000" value="50"></label></div><label class="check"><input id="restorePins" type="checkbox" checked><span><b>Restore GPIO pins</b><small>Restore pin functions and levels when the probe closes.</small></span></label><p class="warning">Share ground with the target. Raspberry Pi 5 is not supported.</p></div></details></article></div></section>
-<section id="debug" class="tab"><div class="heading"><div><em>GDB/MI DEBUGGER</em><h1>Debug workspace</h1><p>Real unwind frames and frame-scoped variables from GDB.</p></div><div class="actions"><button id="browserDebug">Start debugger</button><button data-action="halt">Halt</button><button data-action="step">Step over</button><button data-action="reset-halt">Reset + halt</button><button data-action="resume" class="accent">Run</button></div></div><div id="debugNotice" class="debugnotice">Attach an ELF with debug information, then start the browser debugger.</div><div class="debugtop"><article class="card variables-card"><div class="title"><h3>Variables</h3><button id="refreshVariables">Refresh</button></div><div class="subtabs"><button id="localsTab" class="active">Locals</button><button id="globalsTab">Globals</button></div><div id="globalSearch" class="inline hidden"><input id="globalQuery" placeholder="Search global variables…"><button id="searchGlobals">Search</button></div><div class="variable-head"><span>Name</span><span>Value</span><span>Type</span></div><div id="variablesView" class="empty">Select a stack frame to inspect its variables.</div></article><article class="card stack-card"><div class="title"><h3>Call stack</h3><button id="readStack">Refresh</button></div><div id="stackView" class="empty">Start the browser debugger to load confirmed frames.</div></article></div><div class="debugbottom"><article class="card"><div class="title"><h3>Memory browser</h3><span class="tag">HEX + ASCII</span></div><div class="inline"><input id="memAddress" value="0x20000000"><input id="memLength" type="number" value="128" min="1" max="4096"><button id="readMemory" class="primary">Read memory</button><button id="dumpMemory">Download</button></div><pre id="hexView" class="hex">Address    00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F   ASCII</pre></article><article class="card"><div class="title"><h3>Core registers</h3><button id="readRegs">Refresh</button></div><div id="registers" class="registers empty">Halt the target to read registers.</div></article></div></section>
-<section id="program" class="tab"><div class="heading"><div><em>FIRMWARE</em><h1>Program & dump</h1><p>Program the main application, optionally preceded by a bootloader.</p></div></div><div class="cols"><article class="card"><h3>Firmware images</h3><label class="drop" id="dropzone"><input id="fileInput" type="file" accept=".elf,.axf,.hex,.bin" multiple><strong>⇧</strong><b>Drop firmware here</b><small>ELF, AXF, Intel HEX, or BIN · up to 128 MiB each</small></label><div id="artifactList" class="empty">No files uploaded.</div></article><article class="card form"><h3>Programming plan</h3><label>Main application<select id="mainImage"><option value="">Select main application…</option></select></label><label id="mainOffsetWrap" class="hidden">Main application BIN address<input id="mainOffset" placeholder="e.g. 0x08008000"></label><details class="optional-group"><summary>Optional bootloader</summary><div class="optional-content"><label>Bootloader image<select id="bootImage"><option value="">No bootloader</option></select></label><label id="bootOffsetWrap" class="hidden">Bootloader BIN address<input id="bootOffset" placeholder="e.g. 0x08000000"></label><p class="muted">The bootloader is programmed first. The main application then uses sector erase so the bootloader is preserved.</p></div></details><div class="formrow"><label>Erase method<select id="eraseMode"><option value="auto">Automatic</option><option value="sector" selected>Sector</option><option value="chip">Full chip</option></select></label><label>After programming<select id="postAction"><option value="reset">Reset</option><option value="halt">Reset and halt</option><option value="run">Reset and run</option><option value="none">Do nothing</select></label></div><label class="check"><input id="trustCrc" type="checkbox"> Trust page CRC when available</label><div id="progress" class="progress hidden"><span id="progressLabel">Programming</span><b id="progressValue">0%</b><progress max="1" value="0"></progress></div><div id="flashStatus" class="flash-status" role="status" aria-live="polite" hidden><span id="flashStatusIcon" class="flash-status-icon" aria-hidden="true"></span><span class="flash-status-copy"><strong id="flashStatusTitle"></strong><small id="flashStatusMessage"></small></span></div><div class="formactions"><button id="attachElf">Attach ELF</button><button id="programBtn" class="primary">Program plan</button></div><div class="dangerzone"><span><b>Erase target</b><small>Removes firmware from the MCU.</small></span><button id="eraseBtn" class="danger">Erase…</button></div></article></div><article class="card"><div class="title"><div><em>BACKUP & DIAGNOSTICS</em><h3>Dump target data</h3></div></div><div class="dumpgrid"><label>Preset<select id="dumpRegion"><option value="custom">Custom range</option><option value="flash">All flash regions</option><option value="ram">All RAM regions</option></select></label><label>Start address<input id="dumpAddress" value="0x00000000"></label><label>Length<input id="dumpLength" value="0x10000"></label><button id="dumpRange" class="primary">Download memory</button><button id="dumpRegisters">Download registers</button></div><p id="dumpHint" class="muted">Flash and RAM presets create one binary download per readable region. Custom dumps support up to 512 MiB.</p></article></section>
-<section id="console" class="tab"><div class="heading"><div><em>COMMANDER</em><h1>pyOCD console</h1><p>Direct command access, scoped to the active target.</p></div><button id="clearConsole">Clear</button></div><div class="terminal"><div class="terminalbar"><i></i><i></i><i></i><b>pyocd commander</b></div><pre id="terminalOutput">pyOCD web console ready.&#10;Connect a target, then type “help”.&#10;</pre><form id="consoleForm"><label>›</label><input id="consoleInput" autocomplete="off" spellcheck="false" placeholder="Enter a pyOCD command…"><button>Run</button></form></div></section>
-<section id="logs" class="tab"><div class="heading"><div><em>DIAGNOSTICS</em><h1>pyOCD log</h1><p>Live server, probe, target, GDB, and programming messages.</p></div><div class="actions"><button id="downloadLogs">Download log</button><button id="clearLogs">Clear view</button></div></div><div class="terminal"><div class="terminalbar"><i></i><i></i><i></i><b>pyocd live log</b></div><pre id="logOutput">Waiting for pyOCD messages…</pre></div></section>
-</main></div></div><dialog id="confirmDialog"><h3>Confirm destructive action</h3><p>Erase all target flash? This cannot be undone.</p><div><button id="confirmNo">Cancel</button><button id="confirmYes" class="danger">Erase target</button></div></dialog><script src="/assets/app.js"></script><script src="/assets/dense.js?v=2"></script><script src="/assets/workspace.js?v=1"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#15171c">
+<title>pyOCD Control Center</title>
+<script>
+try {
+  const stored = localStorage.getItem('pyocd-ui-theme');
+  const theme = stored === 'paper' || stored === 'light' ? 'light' : stored === 'auto' ? 'auto' : 'dark';
+  const scale = Math.min(1.25, Math.max(.8, Number(localStorage.getItem('pyocd-ui-scale')) || 1));
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.setProperty('--ui-scale', scale);
+} catch (e) {}
+</script>
+<link rel="stylesheet" href="/assets/app.css?v=3">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9h-5v-6H9v6H4z"/></symbol>
+    <symbol id="i-flash" viewBox="0 0 24 24"><path d="M12 15V3m-5 5 5-5 5 5M4 14v6h16v-6"/></symbol>
+    <symbol id="i-debug" viewBox="0 0 24 24"><path d="M8 7a4 4 0 0 1 8 0M7 10h10v5a5 5 0 0 1-10 0zM12 10v10M3 13h4m10 0h4M4 7l3 3m13-3-3 3M4 20l3-3m13 3-3-3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10m4 0h2M4 12h4m4 0h8M4 18h12m4 0h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/></symbol>
+    <symbol id="i-probe" viewBox="0 0 24 24"><path d="M9 2h6v6H9zM7 8h10v7l-3 3h-4l-3-3zm5 10v4"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><path d="M3 12h3l2-6 4 12 3-9 2 3h4"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="i-step" viewBox="0 0 24 24"><path d="M4 16a8 8 0 0 1 14-5l2 2m0-6v6h-6M12 20h0"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 4v6h6M3.5 10A9 9 0 1 1 5 16"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="1.5"/><path d="M16 8V3H4v13h4"/></symbol>
+    <symbol id="i-unplug" viewBox="0 0 24 24"><path d="M9 3v4m6-4v4M6 7h12v4a6 6 0 0 1-12 0zm6 10v4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2h8l5 5v15H6zm8 0v5h5"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v4m0 3v.5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13"/></symbol>
+  </defs>
+</svg>
+
+<header id="bar" class="bar">
+  <div class="brand"><span class="logo">p</span><b id="brandName">pyOCD</b></div>
+
+  <div id="barSetup" class="bar-group">
+    <div class="combo" id="targetCombo">
+      <svg class="i"><use href="#i-chip"/></svg>
+      <input id="targetSelect" autocomplete="off" spellcheck="false" placeholder="Choose MCU…" role="combobox" aria-label="Target MCU" aria-autocomplete="list" aria-controls="targetOptions" aria-expanded="false">
+      <svg class="i caret"><use href="#i-down"/></svg>
+      <div id="targetOptions" class="menu target-menu" role="listbox" hidden></div>
+    </div>
+    <label id="probeQuickWrap" class="probe-quick" hidden title="Several debug probes are attached">
+      <svg class="i"><use href="#i-probe"/></svg>
+      <select id="probeQuick" aria-label="Debug probe"></select>
+    </label>
+    <button id="probeMissing" class="chip warn" hidden title="Plug in a debug probe. The list refreshes automatically.">
+      <svg class="i"><use href="#i-warn"/></svg>No probe
+    </button>
+    <div class="pop-anchor">
+      <button id="clockButton" class="chip" aria-haspopup="dialog" aria-expanded="false" title="Debug clock">
+        <svg class="i"><use href="#i-clock"/></svg><span id="clockLabel">1 MHz</span>
+      </button>
+      <div id="clockPopover" class="popover clock-popover" hidden>
+        <div class="presets">
+          <button data-clock="100000">100 kHz</button>
+          <button data-clock="1000000">1 MHz</button>
+          <button data-clock="4000000">4 MHz</button>
+          <button data-clock="10000000">10 MHz</button>
+        </div>
+        <div class="range"><input id="frequency" type="range" min="50000" max="10000000" step="50000" value="1000000" aria-label="Debug clock"><output id="frequencyOut">1.00 MHz</output></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="barLive" class="bar-group" hidden>
+    <div class="pop-anchor">
+      <button id="targetSummary" class="target-summary" aria-haspopup="dialog" aria-expanded="false">
+        <i class="dot"></i><b id="liveTarget">—</b><small id="liveDetail"></small><svg class="i caret"><use href="#i-down"/></svg>
+      </button>
+      <div id="targetPopover" class="popover target-popover" hidden>
+        <dl id="targetFacts" class="facts"></dl>
+      </div>
+    </div>
+    <span id="coreState" class="state-chip">—</span>
+    <button id="haltRun" class="tool"><svg class="i"><use href="#i-pause"/></svg><span>Halt</span></button>
+    <div class="split pop-anchor">
+      <button id="resetBtn" class="tool" title="Reset and run"><svg class="i"><use href="#i-reset"/></svg><span>Reset</span></button>
+      <button id="resetMenuBtn" class="tool caret-btn" aria-label="More reset options" aria-haspopup="menu" aria-expanded="false"><svg class="i"><use href="#i-down"/></svg></button>
+      <div id="resetMenu" class="popover menu-list" role="menu" hidden>
+        <button role="menuitem" data-reset="run">Reset and run</button>
+        <button role="menuitem" data-reset="halt">Reset and halt</button>
+      </div>
+    </div>
+  </div>
+
+  <span class="spacer"></span>
+  <span id="otherUsers" class="chip warn" role="status" hidden></span>
+  <span id="busyChip" class="chip busy" hidden><i class="spin"></i><span id="busyLabel">Working…</span></span>
+
+  <div class="gdb-group">
+    <label class="switch" title="GDB server on port 3030">
+      <input id="gdbSwitch" type="checkbox"><i></i><span>GDB</span>
+    </label>
+    <small id="gdbDetail" class="gdb-detail"></small>
+    <button id="copyEndpoint" class="icon-btn" hidden title="Copy GDB endpoint" aria-label="Copy GDB endpoint"><svg class="i"><use href="#i-copy"/></svg></button>
+  </div>
+  <button id="optionsBtn" class="icon-btn options-btn" title="Connection options" aria-label="Connection options">
+    <svg class="i"><use href="#i-sliders"/></svg><span id="optionsBadge" class="badge" hidden></span>
+  </button>
+  <button id="connectBtn" class="primary connect-btn">Connect</button>
+</header>
+
+<div class="shell">
+  <nav id="nav" class="rail" aria-label="Views">
+    <button data-view="home" class="active"><svg class="i"><use href="#i-home"/></svg><span>Home</span></button>
+    <button data-view="flash"><svg class="i"><use href="#i-flash"/></svg><span>Flash</span></button>
+    <button data-view="debug"><svg class="i"><use href="#i-debug"/></svg><span>Debug</span></button>
+    <span class="grow"></span>
+    <button data-view="settings"><svg class="i"><use href="#i-settings"/></svg><span>Settings</span></button>
+  </nav>
+
+  <main id="main">
+    <section id="home" class="view active">
+      <div id="homeOffline">
+        <div class="section-head"><h2>Recent setups</h2><small class="muted">One click to reconnect</small></div>
+        <div id="recentSetups" class="list"></div>
+        <div id="homeHint" class="hint">
+          <p>Choose an MCU in the bar above and press <b>Connect</b>. Connection settings are under <button class="link" data-open-options>connection options</button>.</p>
+          <p class="muted">Missing your part? <button class="link" data-open-packs>Add MCU support</button> from a CMSIS-Pack.</p>
+        </div>
+        <p id="unlockCaution" class="caution" hidden><svg class="i"><use href="#i-warn"/></svg>Automatic unlock is on: connecting to a secured MCU will mass-erase it.</p>
+      </div>
+
+      <div id="homeOnline" hidden>
+        <div class="home-grid">
+          <article class="panel">
+            <div class="panel-head"><h3 id="homeTarget">Target</h3><span id="homeSecurity" class="tag"></span></div>
+            <dl id="homeFacts" class="facts inline"></dl>
+            <table class="table" id="memoryMap"></table>
+          </article>
+          <div class="stack">
+            <article class="panel">
+              <div class="panel-head"><h3>Quick flash</h3><button class="link" data-view-link="flash">All options</button></div>
+              <div id="quickFlash" class="quick-flash"></div>
+              <div id="quickProgress" class="progress" hidden><span class="progress-label"></span><b class="progress-value"></b><progress max="1" value="0"></progress></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Activity</h3></div>
+              <div id="jobs" class="list compact"></div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="flash" class="view">
+      <div class="cols">
+        <article class="panel">
+          <div class="panel-head"><h3>Images</h3></div>
+          <label class="drop" id="dropzone">
+            <input id="fileInput" type="file" accept=".elf,.axf,.hex,.bin" multiple>
+            <svg class="i"><use href="#i-upload"/></svg>
+            <span><b>Drop firmware</b> or click to browse<small>ELF, AXF, Intel HEX or BIN · up to 128 MiB</small></span>
+          </label>
+          <div id="artifactList" class="list"></div>
+        </article>
+
+        <article class="panel form">
+          <div class="panel-head"><h3>Program</h3></div>
+          <label>Image<select id="mainImage"><option value="">Select an image…</option></select></label>
+          <label id="mainOffsetWrap" hidden>Load address (BIN)<input id="mainOffset" placeholder="0x08008000" spellcheck="false"></label>
+          <details class="sub">
+            <summary>Bootloader</summary>
+            <label>Bootloader image<select id="bootImage"><option value="">None</option></select></label>
+            <label id="bootOffsetWrap" hidden>Bootloader address (BIN)<input id="bootOffset" placeholder="0x08000000" spellcheck="false"></label>
+            <p class="muted">The main image is programmed first, then the bootloader with sector erase and no reset in between.</p>
+          </details>
+          <label>After programming<select id="postAction"><option value="reset">Reset</option><option value="halt">Reset and halt</option><option value="run">Reset and run</option><option value="none">Do nothing</option></select></label>
+          <div id="progress" class="progress" hidden><span class="progress-label"></span><b class="progress-value"></b><progress max="1" value="0"></progress></div>
+          <div id="flashStatus" class="status-line" role="status" aria-live="polite" hidden></div>
+          <div class="actions end">
+            <button id="verifyBtn">Verify</button>
+            <button id="programBtn" class="primary">Program</button>
+          </div>
+          <p class="muted small">Erase method, smart flash and CRC options are in <button class="link" data-open-options>connection options</button>.</p>
+        </article>
+      </div>
+
+      <article class="panel">
+        <div class="panel-head"><h3>Operation log</h3><span id="flashLogState" class="tag">Idle</span></div>
+        <div id="flashJobLog" class="log-box"></div>
+      </article>
+
+      <details class="panel collapsible">
+        <summary><h3>Read back and erase</h3><small class="muted">Dump memory or registers, erase the chip</small></summary>
+        <div class="dumpgrid">
+          <label>Range<select id="dumpRegion"><option value="custom">Custom</option><option value="flash">All flash</option><option value="ram">All RAM</option></select></label>
+          <label>Start<input id="dumpAddress" value="0x00000000" spellcheck="false"></label>
+          <label>Length<input id="dumpLength" value="0x10000" spellcheck="false"></label>
+          <button id="dumpRange">Download memory</button>
+          <button id="dumpRegisters">Download registers</button>
+        </div>
+        <p id="dumpHint" class="muted small"></p>
+        <div class="danger-row">
+          <span><b>Erase chip</b><small class="muted">Removes all firmware from the MCU.</small></span>
+          <button id="eraseBtn" class="danger">Erase…</button>
+        </div>
+      </details>
+    </section>
+
+    <section id="debug" class="view">
+      <div class="toolbar">
+        <label class="elf-chip" title="Attach an ELF with debug information">
+          <input id="elfInput" type="file" accept=".elf,.axf">
+          <svg class="i"><use href="#i-file"/></svg><span id="elfName">Load ELF…</span>
+        </label>
+        <button id="browserDebug" class="primary">Start debugger</button>
+        <span class="sep"></span>
+        <button data-action="halt" class="tool"><svg class="i"><use href="#i-pause"/></svg>Halt</button>
+        <button data-action="step" class="tool"><svg class="i"><use href="#i-step"/></svg>Step</button>
+        <button data-action="reset-halt" class="tool"><svg class="i"><use href="#i-reset"/></svg>Reset + halt</button>
+        <button data-action="resume" class="tool"><svg class="i"><use href="#i-play"/></svg>Run</button>
+        <span class="spacer"></span>
+        <small id="debugNotice" class="muted"></small>
+      </div>
+      <div class="debug-grid">
+        <article class="panel">
+          <div class="panel-head"><h3>Call stack</h3><button id="readStack" class="ghost">Refresh</button></div>
+          <div id="stackView" class="list compact"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head">
+            <div class="seg"><button id="localsTab" class="active">Locals</button><button id="globalsTab">Globals</button></div>
+            <button id="refreshVariables" class="ghost">Refresh</button>
+          </div>
+          <div id="globalSearch" class="inline" hidden><input id="globalQuery" placeholder="Search globals…"><button id="searchGlobals">Search</button></div>
+          <div id="variablesView" class="vars"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><h3>Registers</h3><button id="readRegs" class="ghost">Read</button></div>
+          <div id="registers" class="registers"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><h3>Memory</h3>
+            <div class="inline">
+              <input id="memAddress" value="0x20000000" aria-label="Address" spellcheck="false">
+              <input id="memLength" type="number" value="128" min="1" max="4096" aria-label="Length">
+              <button id="readMemory">Read</button>
+              <button id="dumpMemory" class="ghost">Download</button>
+            </div>
+          </div>
+          <pre id="hexView" class="hex"></pre>
+        </article>
+      </div>
+    </section>
+
+    <section id="settings" class="view">
+      <div class="settings">
+        <article class="panel form">
+          <div class="panel-head"><h3>Interface</h3></div>
+          <div class="row-field"><span>Name</span><div class="inline"><input id="interfaceName" maxlength="48" placeholder="pyOCD"><button id="saveInterfaceName">Save</button></div></div>
+          <div class="row-field"><span>Theme</span>
+            <div class="seg" role="group" aria-label="Theme"><button data-theme-choice="dark">Dark</button><button data-theme-choice="light">Light</button><button data-theme-choice="auto">System</button></div>
+          </div>
+          <div class="row-field"><span>Scale</span><div class="range"><input id="uiScale" type="range" min="80" max="125" step="5"><output id="uiScaleOut">100%</output></div></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><h3>Connection and device support</h3></div>
+          <div class="link-rows">
+            <button data-open-options><span><b>Connection options</b><small>Probe, transport, reset, flashing, recovery</small></span><svg class="i"><use href="#i-sliders"/></svg></button>
+            <button data-open-packs><span><b>Add MCU support</b><small>Install a CMSIS-Pack from the device catalog</small></span><svg class="i"><use href="#i-plus"/></svg></button>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><h3>pyOCD</h3><span id="aboutVersion" class="tag">—</span></div>
+          <dl id="systemFacts" class="facts grid"></dl>
+          <div class="actions">
+            <button id="checkUpdates">Check for updates</button>
+            <button id="restartPyocd">Restart pyOCD</button>
+          </div>
+          <div id="updateResult" class="muted small">Updates are never installed automatically.</div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><h3>Network</h3></div>
+          <div id="networkAddresses" class="address-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><h3>Host power</h3></div>
+          <p id="powerSupport" class="muted small">Checking platform support…</p>
+          <div class="actions"><button id="rebootSystem" disabled>Reboot</button><button id="shutdownSystem" class="danger" disabled>Shut down</button></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <section id="dock" class="dock" aria-label="Output">
+    <div id="dockResize" class="dock-resize" aria-hidden="true"></div>
+    <div class="dock-head">
+      <div class="dock-tabs" role="tablist">
+        <button role="tab" data-dock="log" class="active">Log<i id="logAlert" class="alert-dot" hidden></i></button>
+        <button role="tab" data-dock="console">Console</button>
+        <button role="tab" data-dock="traffic">SWD traffic</button>
+      </div>
+      <span class="spacer"></span>
+      <div class="dock-actions" data-for="log"><button id="downloadLogs" class="ghost">Download</button><button id="clearLogs" class="ghost">Clear</button></div>
+      <div class="dock-actions" data-for="console" hidden><button id="clearConsole" class="ghost">Clear</button></div>
+      <div class="dock-actions" data-for="traffic" hidden>
+        <small id="swdTrafficStats" class="muted"></small>
+        <label class="switch small"><input id="swdTrafficSwitch" type="checkbox"><i></i><span>Capture</span></label>
+        <button id="clearSwdTraffic" class="ghost">Clear</button>
+      </div>
+      <button id="dockToggle" class="icon-btn" aria-label="Toggle output panel"><svg class="i"><use href="#i-up"/></svg></button>
+    </div>
+    <div class="dock-body">
+      <pre id="logOutput" data-pane="log" class="term"></pre>
+      <div data-pane="console" class="console" hidden>
+        <pre id="terminalOutput" class="term">pyOCD console. Connect a target, then type "help".
+</pre>
+        <form id="consoleForm"><span>›</span><input id="consoleInput" autocomplete="off" spellcheck="false" placeholder="pyOCD command…"></form>
+      </div>
+      <div id="swdTrafficGroups" data-pane="traffic" class="traffic" hidden></div>
+    </div>
+  </section>
+</div>
+
+<div id="drawerScrim" class="scrim" hidden></div>
+<aside id="optionsDrawer" class="drawer" aria-label="Connection options" hidden>
+  <div class="drawer-head">
+    <h2>Connection options</h2>
+    <button id="closeOptions" class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="drawer-body form">
+    <h4>Probe</h4>
+    <label>Debug probe<select id="probeSelect"><option value="">Scanning…</option></select></label>
+    <div class="actions"><button id="probeResetBtn" title="Pulse the probe nRESET pin without connecting">Pulse reset pin</button></div>
+
+    <h4>Link</h4>
+    <div class="formrow">
+      <label>Transport<select id="protocol"><option value="default">Automatic</option><option value="swd">SWD</option><option value="jtag">JTAG</option></select></label>
+      <label>Connect mode<select id="connectMode"><option value="halt">Halt on connect</option><option value="attach">Attach</option><option value="under-reset">Under reset</option><option value="pre-reset">Pre-reset</option></select></label>
+    </div>
+    <label class="check"><input id="resumeOnDisconnect" type="checkbox"><span><b>Run on disconnect</b><small>Resume execution when the session closes.</small></span></label>
+    <label class="check"><input id="swjEnable" type="checkbox"><span><b>SWJ switch sequence</b><small>Switch between SWD and JTAG automatically.</small></span></label>
+    <label class="check"><input id="swjDormant" type="checkbox"><span><b>Dormant-state sequence</b><small>ADIv5.2 transition where supported.</small></span></label>
+
+    <h4>Reset</h4>
+    <label>Reset method<select id="resetMethod"><option value="hardware">Reset pin</option><option value="core">Core reset over SWD</option></select></label>
+    <div class="formrow">
+      <label>Hold time (s)<input id="resetHoldTime" type="number" min="0" max="10" step="0.01"></label>
+      <label>Post-reset delay (s)<input id="resetPostDelay" type="number" min="0" max="10" step="0.01"></label>
+    </div>
+
+    <h4>Flashing</h4>
+    <label>Erase method<select id="eraseMode"><option value="auto">Automatic</option><option value="sector">Sector</option><option value="chip">Full chip</option></select></label>
+    <label class="check"><input id="smartFlash" type="checkbox"><span><b>Smart flash</b><small>Skip pages whose contents are unchanged.</small></span></label>
+    <label class="check"><input id="trustCrc" type="checkbox"><span><b>Trust page CRC</b><small>Accept matching CRCs without a full readback.</small></span></label>
+    <label class="check"><input id="keepUnwritten" type="checkbox"><span><b>Preserve unwritten data</b><small>Keep existing data in partially written sectors.</small></span></label>
+
+    <div id="cmsisDapOptions" class="adapter" hidden>
+      <h4>CMSIS-DAP</h4>
+      <label class="check"><input id="cmsisPreferV1" type="checkbox"><span><b>Prefer CMSIS-DAP v1</b><small>Use HID v1 when both versions are exposed.</small></span></label>
+      <label class="check"><input id="cmsisDeferred" type="checkbox"><span><b>Deferred transfers</b><small>Queue transfers for better throughput.</small></span></label>
+      <label class="check"><input id="cmsisLimitPackets" type="checkbox"><span><b>Limit in-flight packets</b><small>For probes that mishandle queues.</small></span></label>
+    </div>
+    <div id="jlinkOptions" class="adapter" hidden>
+      <h4>J-Link</h4>
+      <label class="check"><input id="jlinkPower" type="checkbox"><span><b>Control target power</b><small>Power on while connected, off on disconnect.</small></span></label>
+    </div>
+    <div id="stlinkOptions" class="adapter" hidden>
+      <h4>ST-Link V3</h4>
+      <label>Performance mode<select id="stlinkPrescaler"><option value="1">High performance</option><option value="2">Normal</option><option value="4">Low power</option></select></label>
+    </div>
+    <div id="rpiOptions" class="adapter" hidden>
+      <h4>Raspberry Pi GPIO <span class="tag">3.3 V · BCM numbering</span></h4>
+      <div id="pins" class="pins"></div>
+      <div class="formrow three">
+        <label>SWCLK<input id="swclk" type="number"></label>
+        <label>SWDIO<input id="swdio" type="number"></label>
+        <label>nRESET<input id="nreset" type="number" placeholder="Optional"></label>
+      </div>
+      <div class="formrow">
+        <label>SWDIO direction<input id="swdioDir" type="number" placeholder="Optional"></label>
+        <label>Wait retries<input id="gpioWaitRetries" type="number" min="1" max="10000"></label>
+      </div>
+      <label class="check"><input id="restorePins" type="checkbox"><span><b>Restore GPIO pins</b><small>Restore pin functions when the probe closes.</small></span></label>
+      <p class="caution">Share ground with the target. Raspberry Pi 5 is not supported.</p>
+    </div>
+
+    <div id="packSequenceOptions" hidden>
+      <h4>CMSIS-Pack debug sequences</h4>
+      <p id="packSequenceIdentity" class="muted small"></p>
+      <label class="check"><input id="packSequencesEnable" type="checkbox"><span><b>Use vendor debug sequences</b><small>Vendor-supplied connect, reset and unlock behaviour.</small></span></label>
+      <div class="inline"><select id="packSequenceRunSelect"><option value="">Select a sequence…</option></select><button id="packSequenceRun" disabled>Run</button></div>
+      <p class="caution">A sequence may reset, unlock, erase or disconnect the MCU.</p>
+    </div>
+
+    <h4>Recovery</h4>
+    <label class="check"><input id="autoUnlock" type="checkbox"><span><b>Automatic unlock</b><small>Mass-erase a secured target when required to unlock it.</small></span></label>
+    <dl class="facts inline"><div><dt>Security</dt><dd id="targetSecurityState">Not connected</dd></div><div><dt>Method</dt><dd id="targetRecoveryMethod">—</dd></div></dl>
+    <p id="targetRecoveryImplementation" class="muted small"></p>
+    <button id="targetUnlock" class="danger" disabled>Mass erase and unlock</button>
+  </div>
+  <div class="drawer-foot">
+    <small class="muted">Saved automatically · applied on next connect</small>
+    <button id="resetOptions" class="ghost">Restore defaults</button>
+  </div>
+</aside>
+
+<dialog id="packDialog" class="dialog pack-dialog">
+  <div class="dialog-head"><h2>Add MCU support</h2><button id="closePackDialog" class="icon-btn" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <p class="muted small">Search the CMSIS-Pack device catalog and install a support pack.</p>
+  <div class="inline"><input id="packSearch" placeholder="Part number or vendor…"><button id="packIndex">Refresh index</button></div>
+  <div id="packResults" class="list compact"></div>
+</dialog>
+
+<dialog id="confirmDialog" class="dialog">
+  <h2 id="confirmTitle">Erase chip?</h2>
+  <p id="confirmText">All flash contents will be erased. This can't be undone.</p>
+  <div class="actions end"><button id="confirmNo">Cancel</button><button id="confirmYes" class="danger">Erase</button></div>
+</dialog>
+
+<div id="waitingOverlay" class="waiting" role="status" aria-live="polite" hidden>
+  <div class="waiting-card">
+    <i class="spin"></i>
+    <div><b id="waitingTitle">Waiting for pyOCD…</b><small id="waitingDetail">This operation is still running.</small></div>
+    <button id="waitingRestart" hidden>Restart pyOCD</button>
+  </div>
+</div>
+<div id="toast" class="toasts" aria-live="polite"></div>
+
+<script src="/assets/app.js?v=3"></script>
+</body>
+</html>
