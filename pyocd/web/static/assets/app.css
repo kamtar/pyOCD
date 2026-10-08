@@ -208,7 +208,7 @@ select { padding-right: 4px; }
 .rail button:hover { color: var(--text); background: var(--surface-2) !important; }
 .rail button.active { color: var(--text); background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
 main { min-height: 0; overflow: auto; padding: 16px 20px 24px; }
-.view { display: none; max-width: 1240px; }
+.view { display: none; max-width: 1240px; margin: 0 auto; }
 .view.active { display: block; }
 .view > * + * { margin-top: 14px; }
 
@@ -336,7 +336,7 @@ details.collapsible[open] > summary { margin-bottom: 12px; }
 .panel-head .inline input[type="number"] { width: 5rem; }
 
 /* Settings */
-.settings { display: grid; gap: 14px; max-width: 760px; }
+.settings { display: grid; gap: 14px; max-width: 760px; margin: 0 auto; }
 .row-field { display: grid; grid-template-columns: 7rem 1fr; align-items: center; gap: 12px; }
 .row-field > span { color: var(--muted); }
 .row-field .range { max-width: 22rem; }
