@@ -334,7 +334,9 @@ def test_gdb_step_applies_address_zero_before_execution():
         target_context=SimpleNamespace(write_core_register_raw=lambda reg, value: events.append((reg, value))),
         target=SimpleNamespace(step=lambda *args, **kwargs: events.append('step')),
         trace_capture=lambda: None, trace_flush=lambda: None, step_into_interrupt=False,
-        get_t_response=lambda client: b'T05', create_rsp_packet=lambda data: data)
+        get_t_response=lambda client, forceSignal=None: b'T05', create_rsp_packet=lambda data: data,
+        _claim_active_run_client=lambda client: True, _release_active_run_client=lambda client: None)
+    server._execute_step = lambda client: server.target.step()
     client = SimpleNamespace(is_interrupted=lambda: False)
     assert GDBServer.step(server, client, b's0') == b'T05'
     assert events == [('pc', 0), 'step']

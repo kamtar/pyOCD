@@ -32,7 +32,7 @@ from ...coresight.coresight_target import CoreSightTarget
 from ...coresight.cortex_m import CortexM
 from ...debug.sequences.delegates import DebugSequenceDelegate, TraceSetup
 from ...debug.sequences.functions import DebugSequenceCommonFunctions
-from ...debug.sequences.sequences import (Block, DebugSequence, DebugSequenceExecutionContext)
+from ...debug.sequences.sequences import (Block, DebugSequence, DebugSequenceExecutionContext, DebugSequenceMessageError)
 from ...debug.sequences.default_sequences import DefaultDebugSequences
 from ...debug.sequences.scope import Scope
 from ...debug.svd.loader import SVDFile
@@ -318,6 +318,8 @@ class PackDebugSequenceDelegate(DebugSequenceDelegate):
         with context:
             try:
                 executed_scope = seq.execute(context)
+            except DebugSequenceMessageError:
+                executed_scope = None
             except exceptions.Error as err:
                 prefix = f"Error while running debug sequence '{name}'"
                 if pname:
@@ -398,6 +400,7 @@ class PackDebugSequenceDelegate(DebugSequenceDelegate):
         - [15:8] reset type: 0=error, 1=hw, 2=SYSRESETREQ, 3=VECTRESET
         - [16] connect under reset?
         - [17] pre-connect reset?
+        - [18] halt after reset?
         """
         ctype = 1 if self._session.command not in ('load', 'erase') else 2
         ctype |= self.RESET_TYPE_MAP.get(self._session.options.get('reset_type'), 0) << 8
@@ -411,6 +414,8 @@ class PackDebugSequenceDelegate(DebugSequenceDelegate):
         # pre_connect() method.
         if self._session.context_state.is_performing_pre_reset:
             ctype |= 1 << 17
+        if self._session.context_state.halt_on_reset:
+            ctype |= 1 << 18
         return ctype
 
     def get_traceout(self) -> int:

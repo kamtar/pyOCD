@@ -479,7 +479,8 @@ class RTTServer:
                         LOG.warning("RTT up channel %d queue full; dropped %d bytes",
                                     ch_idx, len(data) - bytes_kept)
                 except (exceptions.TransferError, exceptions.RTTError) as e:
-                    LOG.error("Error reading RTT up channel %d: %s", ch_idx, e)
+                    LOG.debug("Error reading RTT up channel %d: %s", ch_idx, e)
+                    raise
             try:
                 # Write to worker
                 if up_buffer:
@@ -507,7 +508,8 @@ class RTTServer:
                     bytes_out = self.control_block.down_channels[ch_idx].write(down_buffer.peek())
                     down_buffer.consume(bytes_out)
             except (exceptions.TransferError, exceptions.RTTError) as e:
-                LOG.error("Error writing RTT down channel %d: %s", ch_idx, e)
+                LOG.debug("Error writing RTT down channel %d: %s", ch_idx, e)
+                raise
 
     def poll(self):
         """@brief Reads from and writes to active RTT channels. """

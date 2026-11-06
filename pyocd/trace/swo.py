@@ -178,7 +178,7 @@ class SWOParser:
                 c = (hdr >> 7) & 0x1
                 d = (hdr >> 4) & 0b111
                 # Local timestamp.
-                if (hdr & 0xf) == 0 and d not in (0x0, 0x3):
+                if (hdr & 0xf) == 0 and d not in (0x0, 0x7):
                     ts = 0
                     tc = 0
                     # Local timestamp packet format 1.
@@ -197,7 +197,10 @@ class SWOParser:
                 elif hdr in (0b10010100, 0b10110100):
                     # TODO handle global timestamp
                     # t = (hdr >> 5) & 0x1
-                    pass
+                    while True:
+                        byte = yield
+                        if (byte & 0x80) == 0:
+                            break
                 # Extension.
                 elif (hdr & 0x8) == 0x8:
                     sh = (hdr >> 2) & 0x1
@@ -283,6 +286,3 @@ class SWOParser:
                 # Invalid DWT 'a' value.
                 else:
                     invalid = True
-
-
-

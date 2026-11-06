@@ -286,6 +286,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
             Target.ResetType.VECTRESET, # May be removed since only v7-M cores support SW_VECTRESET
             Target.ResetType.EMULATED,
         }
+        self._halt_on_reset: bool = False
         self._last_vector_catch: int = 0
         self.fpb: Optional[FPB] = None
         self.dwt: Optional[DWT] = None
@@ -1026,7 +1027,11 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
                 # Run the sequence if it exists.
                 if self.has_debug_sequence(reset_sequence_name, pname=self.node_name):
                     LOG.debug("running '%s' debug sequence, core %d", reset_sequence_name, self.core_number)
-                    self.debug_sequence_delegate.run_sequence(reset_sequence_name, pname=self.node_name)
+                    try:
+                        self.session.context_state.halt_on_reset = self._halt_on_reset
+                        self.debug_sequence_delegate.run_sequence(reset_sequence_name, pname=self.node_name)
+                    finally:
+                        self.session.context_state.halt_on_reset = False
                     result = True
                 elif reset_sequence_name not in STANDARD_RESET_SEQUENCES:
                     # Custom reset sequence was specified but not found. Warn the user, but don't fall back
@@ -1136,7 +1141,11 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         self.set_reset_catch(reset_type)
 
         # Perform the reset.
-        self.reset(reset_type)
+        self._halt_on_reset = True
+        try:
+            self.reset(reset_type)
+        finally:
+            self._halt_on_reset = False
 
         # Wait until the unit resets. If emulated reset is used then it will have already halted
         # for us.
@@ -1217,6 +1226,27 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
 
     def find_breakpoint(self, addr: int) -> Optional[Breakpoint]:
         return self.bp_manager.find_breakpoint(addr)
+
+    def skip_breakpoint_instruction(self, exclude_semihosting: bool = False) -> bool:
+        """@brief Skip an BKPT instruction.
+
+        @return True if a BKPT instruction was skipped, otherwise False.
+        """
+
+        pc = self.read_core_register('pc')
+
+        instruction = self.read16(pc)
+        if (instruction & 0xff00) != 0xbe00:
+            return False
+
+        if exclude_semihosting and instruction == 0xbeab:
+            return False
+
+        self.write_core_register('pc', pc + 2)
+        LOG.debug("Skipped breakpoint at 0x%08x", pc)
+        self._run_token += 1
+
+        return True
 
     def check_reg_list(self, reg_list: Sequence[CoreRegisterNameOrNumberType]) -> None:
         """@brief Sanity check register values and raise helpful errors."""
@@ -1673,9 +1703,7 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
         @return @ref pyocd.core.target.Target.HaltReason "Target.HaltReason" enumerator or None.
         """
         dfsr = self.read32(CortexM.DFSR)
-        if dfsr & CortexM.DFSR_HALTED:
-            reason = Target.HaltReason.DEBUG
-        elif dfsr & CortexM.DFSR_BKPT:
+        if dfsr & CortexM.DFSR_BKPT:
             reason = Target.HaltReason.BREAKPOINT
         elif dfsr & CortexM.DFSR_DWTTRAP:
             reason = Target.HaltReason.WATCHPOINT
@@ -1683,6 +1711,8 @@ class CortexM(CoreTarget, CoreSightCoreComponent): # lgtm[py/multiple-calls-to-i
             reason = Target.HaltReason.VECTOR_CATCH
         elif dfsr & CortexM.DFSR_EXTERNAL:
             reason = Target.HaltReason.EXTERNAL
+        elif dfsr & CortexM.DFSR_HALTED:
+            reason = Target.HaltReason.DEBUG
         else:
             reason = None
         return reason
